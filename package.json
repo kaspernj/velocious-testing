@@ -1,0 +1,79 @@
+{
+  "name": "@velocious/testing",
+  "version": "0.0.0",
+  "description": "Independent Velocious-compatible testing DSL and standalone test runner.",
+  "type": "module",
+  "private": false,
+  "license": "MIT",
+  "author": "Kasper Johansen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kaspernj/velocious-testing.git"
+  },
+  "homepage": "https://github.com/kaspernj/velocious-testing#readme",
+  "bugs": {
+    "url": "https://github.com/kaspernj/velocious-testing/issues"
+  },
+  "keywords": [
+    "testing",
+    "test-runner",
+    "javascript",
+    "esm",
+    "velocious"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.js",
+      "default": "./build/index.js"
+    },
+    "./runner": {
+      "types": "./build/runner.d.ts",
+      "import": "./build/runner.js",
+      "default": "./build/runner.js"
+    },
+    "./node": {
+      "types": "./build/node/index.d.ts",
+      "import": "./build/node/index.js",
+      "default": "./build/node/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "velocious-test": "./build/node/cli.js"
+  },
+  "files": [
+    "build",
+    "src",
+    "docs",
+    "changelog.d",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.js",
+    "compile": "tsc -p tsconfig.build.json && node scripts/ensure-cli-executable.js",
+    "build": "npm run clean && npm run compile",
+    "test": "npm run build && node --test --test-concurrency=1 tests/*.test.mjs",
+    "eslint": "eslint src tests scripts",
+    "lint": "npm run eslint",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run lint && npm run typecheck && npm test",
+    "verify:docker-dev-environment": "node scripts/verify-docker-dev-environment.js",
+    "prepack": "npm run build",
+    "release:patch": "release-patch"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.9.0",
+    "release-patch": "^1.0.6",
+    "typescript": "^6.0.3"
+  }
+}

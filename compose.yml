@@ -1,0 +1,20 @@
+name: velocious-testing
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    init: true
+    user: "1000:1000"
+    working_dir: /home/dev/velocious-testing
+    environment:
+      HOME: /home/dev
+      NODE_ENV: development
+    volumes:
+      - type: bind
+        source: ${DEV_HOME_PATH:-/home/dev}
+        target: /home/dev
+        bind:
+          create_host_path: false
+    command: ["sleep", "infinity"]
