@@ -40,7 +40,7 @@ test("Docker contract is source-independent and binds only the complete developm
 })
 
 test("TensorBuzz fans out lockfile setup into supported Node tests and one quality lane", async () => {
-  await assert.rejects(lstat(".github"), {code: "ENOENT"})
+  await assert.rejects(lstat(".github/workflows"), {code: "ENOENT"})
 
   const configuration = await readFile("tensorbuzz.yml", "utf8")
   const useNode = await readFile("scripts/tensorbuzz-use-node", "utf8")
