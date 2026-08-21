@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "Usage: scripts/tensorbuzz-use-node VERSION" >&2
+  exit 2
+fi
+
+version="$1"
+case "$version" in
+  20.20.2|22.23.2|24.19.0) ;;
+  *)
+    echo "Unsupported TensorBuzz Node version: $version" >&2
+    exit 2
+    ;;
+esac
+
+case "$(uname -m)" in
+  x86_64) node_architecture="x64" ;;
+  aarch64|arm64) node_architecture="arm64" ;;
+  *)
+    echo "Unsupported TensorBuzz architecture: $(uname -m)" >&2
+    exit 2
+    ;;
+esac
+
+archive="node-v${version}-linux-${node_architecture}.tar.xz"
+download_directory="$(mktemp -d)"
+trap 'rm -rf -- "$download_directory"' EXIT
+
+curl \
+  --fail \
+  --silent \
+  --show-error \
+  --location \
+  --retry 5 \
+  --retry-delay 5 \
+  --retry-all-errors \
+  "https://nodejs.org/dist/v${version}/${archive}" \
+  --output "${download_directory}/${archive}"
+
+sudo tar -xJf "${download_directory}/${archive}" -C /usr/local --strip-components=1
+test "$(node --version)" = "v${version}"
+npm --version

@@ -72,4 +72,4 @@ docker compose exec -T dev npm run check
 docker compose exec -T dev npm run verify:docker-dev-environment
 ```
 
-Use a distinct `COMPOSE_PROJECT_NAME` and `DEV_HOME_PATH` for concurrent isolated checkouts. Generated `build/` files and local tarballs are ignored. Pull requests validate Node 20/22/24, while `release-patch` remains the sole release authority.
+Use a distinct `COMPOSE_PROJECT_NAME` and `DEV_HOME_PATH` for concurrent isolated checkouts. Generated `build/` files and local tarballs are ignored. TensorBuzz validates the complete suite on pinned Node 20/22/24 releases and runs the remaining quality/package gates once; `release-patch` remains the sole release authority.
