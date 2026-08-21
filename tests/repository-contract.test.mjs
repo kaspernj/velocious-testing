@@ -39,8 +39,47 @@ test("Docker contract is source-independent and binds only the complete developm
   assert.doesNotMatch(`${dockerfile}\n${compose}`, /hermes|threadwire|provider-runtime|auth\.json/i)
 })
 
-test("CI represents Node 20, 22, and 24 without publishing", async () => {
-  const workflow = await readFile(".github/workflows/validation.yml", "utf8")
-  assert.match(workflow, /node-version: \[20, 22, 24\]/)
-  assert.doesNotMatch(workflow, /npm publish|release-patch/)
+test("TensorBuzz fans out lockfile setup into supported Node tests and one quality lane", async () => {
+  await assert.rejects(lstat(".github"), {code: "ENOENT"})
+
+  const configuration = await readFile("tensorbuzz.yml", "utf8")
+  const useNode = await readFile("scripts/tensorbuzz-use-node", "utf8")
+  const executable = (await lstat("scripts/tensorbuzz-use-node")).mode & 0o111
+
+  assert.match(configuration, /^environment:\n/m)
+  for (const environmentLine of [
+    'CI: "true"',
+    "NODE_ENV: test",
+    'NPM_CONFIG_AUDIT: "false"',
+    'NPM_CONFIG_FUND: "false"',
+    'NPM_CONFIG_UPDATE_NOTIFIER: "false"'
+  ]) assert.match(configuration, new RegExp(`^  ${environmentLine}$`, "m"))
+  assert.match(configuration, /^builds:\n  setup:\n/m)
+  assert.equal((configuration.match(/npm ci --no-audit --fund=false/g) || []).length, 1)
+  assert.match(configuration, /^    builds:\n      node_20_tests:\n/m)
+  assert.deepEqual(
+    [...configuration.matchAll(/^      ([a-z0-9_]+):$/gm)].map((match) => match[1]),
+    ["node_20_tests", "node_22_tests", "node_24_tests", "quality_and_package"]
+  )
+  for (const version of ["20.20.2", "22.23.2", "24.19.0"]) {
+    assert.match(configuration, new RegExp(`scripts/tensorbuzz-use-node ${version.replaceAll(".", "\\.")}`))
+  }
+  assert.equal((configuration.match(/npm test/g) || []).length, 3)
+  for (const command of [
+    "npm run lint",
+    "npm run typecheck",
+    "npm run build",
+    "npm run verify:docker-dev-environment",
+    "npm audit --audit-level=high",
+    "npm ls --omit=dev --all",
+    "npm pack --dry-run --json"
+  ]) {
+    assert.equal(configuration.split(command).length - 1, 1, `${command} must run once`)
+  }
+  assert.doesNotMatch(configuration, /npm publish|release-patch/)
+
+  assert.notEqual(executable, 0)
+  assert.match(useNode, /^#!\/usr\/bin\/env bash\nset -euo pipefail\n/)
+  assert.match(useNode, /curl .*--retry 5 .*https:\/\/nodejs\.org\/dist\/v\$\{version\}/s)
+  assert.match(useNode, /test "\$\(node --version\)" = "v\$\{version\}"/)
 })

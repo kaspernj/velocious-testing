@@ -1,0 +1,40 @@
+environment:
+  CI: "true"
+  NODE_ENV: test
+  NPM_CONFIG_AUDIT: "false"
+  NPM_CONFIG_FUND: "false"
+  NPM_CONFIG_UPDATE_NOTIFIER: "false"
+builds:
+  setup:
+    name: Setup
+    script:
+      - node --version
+      - npm --version
+      - npm ci --no-audit --fund=false
+    builds:
+      node_20_tests:
+        name: Node 20 tests
+        script:
+          - scripts/tensorbuzz-use-node 20.20.2
+          - npm test
+      node_22_tests:
+        name: Node 22 tests
+        script:
+          - scripts/tensorbuzz-use-node 22.23.2
+          - npm test
+      node_24_tests:
+        name: Node 24 tests
+        script:
+          - scripts/tensorbuzz-use-node 24.19.0
+          - npm test
+      quality_and_package:
+        name: Quality and package validation
+        script:
+          - node --version
+          - npm run lint
+          - npm run typecheck
+          - npm run build
+          - npm run verify:docker-dev-environment
+          - npm audit --audit-level=high
+          - npm ls --omit=dev --all
+          - npm pack --dry-run --json

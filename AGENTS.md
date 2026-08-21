@@ -14,6 +14,6 @@ Use ESM and checked JavaScript/JSDoc. Generated `build/` files come only from `n
 
 All final package commands run inside the canonical Compose `dev` service. The source-independent image mounts the complete `${DEV_HOME_PATH:-/home/dev}` at `/home/dev`, runs as UID/GID 1000, and installs no repository dependencies while building.
 
-Before handoff run `npm ci`, `npm run lint`, `npm run typecheck`, `npm test`, package/bundle/standalone checks, `npm run verify:docker-dev-environment`, `docker compose config`, and `git diff --check`. Releases use `npm run release:patch`; do not manually version, publish, commit, push, or add GitHub Actions publishing unless explicitly authorized.
+Before handoff run `npm ci`, `npm run lint`, `npm run typecheck`, `npm test`, package/bundle/standalone checks, `npm run verify:docker-dev-environment`, `docker compose config`, and `git diff --check`. TensorBuzz owns CI validation; do not add GitHub Actions workflows. Releases use `npm run release:patch`; do not manually version, publish, commit, or push unless explicitly authorized.
 
 Document public changes in README, `docs/`, and `changelog.d/YYYYMMDDHHMMSS-slug.md` together.

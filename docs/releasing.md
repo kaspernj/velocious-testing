@@ -1,6 +1,6 @@
 # Releasing
 
-Releases are owned by the lockfile-installed `release-patch` 1.0.6 workflow, not GitHub Actions. Its version source of truth is the latest annotated `vX.Y.Z` tag. A normal patch release therefore cannot bootstrap this unborn package: the first release must establish and publish the `v0.0.0` baseline with resume mode.
+Releases are owned by the lockfile-installed `release-patch` 1.0.6 workflow, not CI. Its version source of truth is the latest annotated `vX.Y.Z` tag. A normal patch release therefore cannot bootstrap this unborn package: the first release must establish and publish the `v0.0.0` baseline with resume mode.
 
 ## First release after repository bootstrap
 
