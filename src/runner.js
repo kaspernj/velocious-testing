@@ -14,8 +14,9 @@ export {PROTOCOL_MAJOR}
 /** @typedef {{total: number, passed: number, failed: number, skipped: number}} TestRunCounts */
 /** @typedef {{protocolMajor: number, status: "passed" | "failed", noMatches: boolean, counts: TestRunCounts, tests: TestResult[], errors: Array<{phase: string, suite: string, error: TestErrorRecord}>}} TestRunResult */
 /** @typedef {{protocolMajor: number, timestamp: number, type: string, [key: string]: any}} RunnerEvent */
-/** @typedef {{onEvent: (event: RunnerEvent) => void}} Reporter */
+/** @typedef {{onEvent: (event: RunnerEvent) => void | Promise<void>}} Reporter */
 /** @typedef {{failed: false} | {failed: true, error: any}} FailureState */
+/** @typedef {{suite: SuiteDeclaration, timeoutMs: number, result: TestRunResult, cleanupPromise?: Promise<void>}} ActiveSuite */
 /**
  * @typedef {object} AttemptExecutorInput
  * @property {TestContext} context
@@ -39,9 +40,12 @@ export {PROTOCOL_MAJOR}
  * @property {RegExp[]} [examples]
  * @property {Record<string, number[]>} [lineFilters]
  * @property {boolean} [ignoreFocus]
+ * @property {"all" | "any"} [includeTagMode]
+ * @property {boolean} [focusedTestsBypassIncludeTags]
  * @property {number} [retries]
  * @property {number} [timeoutMs]
  * @property {AttemptExecutor} [attemptExecutor]
+ * @property {boolean} [attemptExecutorOwnsTimeout]
  * @property {TestArgumentResolver} [testArgumentResolver]
  * @property {Reporter} [reporter]
  */
@@ -200,10 +204,18 @@ function hasFocus(suite) {
   return suite.focus || suite.tests.some((/** @type {any} */ entry) => entry.focus) || suite.suites.some(hasFocus)
 }
 
+/** @param {any[]} lineage @param {any} test @returns {string} */
+function buildFullName(lineage, test) {
+  return [
+    ...lineage.map((entry) => entry.name).filter((name) => name !== ""),
+    test.name
+  ].join(" ")
+}
+
 /** @param {any} suite @param {any[]} ancestors @param {any[]} output */
 function flatten(suite, ancestors, output) {
   const lineage = [...ancestors, suite]
-  for (const test of suite.tests) output.push({suite, test, lineage, fullName: [...lineage.map((entry) => entry.name), test.name].join(" ")})
+  for (const test of suite.tests) output.push({suite, test, lineage, fullName: buildFullName(lineage, test)})
   for (const child of suite.suites) flatten(child, lineage, output)
 }
 
@@ -230,16 +242,21 @@ export class TestRunner {
     this.options = options
     this.context = options.context || defaultTestContext
     if (this.context.protocolMajor !== PROTOCOL_MAJOR) throw new Error(`Unsupported test context protocol major: ${this.context.protocolMajor}`)
+    if (options.includeTagMode !== undefined && !["all", "any"].includes(options.includeTagMode)) {
+      throw new Error(`Invalid includeTagMode: ${options.includeTagMode}`)
+    }
     this.attemptExecutor = options.attemptExecutor || ((input) => defaultAttemptExecutor(input))
     this.testArgumentResolver = options.testArgumentResolver || (() => [])
     this.reporter = options.reporter || {onEvent() {}}
+    /** @type {ActiveSuite[]} */
+    this.activeSuites = []
   }
 
-  /** @private @param {Omit<RunnerEvent, "protocolMajor" | "timestamp">} event @returns {void} */
-  emit(event) {
+  /** @private @param {Omit<RunnerEvent, "protocolMajor" | "timestamp">} event @returns {Promise<void>} */
+  async emit(event) {
     const structured = /** @type {RunnerEvent} */ ({protocolMajor: PROTOCOL_MAJOR, timestamp: Date.now(), ...event})
     this.context.events.emit("runner", structured)
-    this.reporter.onEvent(structured)
+    await this.reporter.onEvent(structured)
   }
 
   /** @returns {Promise<TestRunResult>} */
@@ -253,9 +270,15 @@ export class TestRunner {
     const examples = this.options.examples || []
     const selected = all.filter((/** @type {any} */ entry) => {
       const tags = new Set(entry.test.tags)
-      if (focused && !this.options.ignoreFocus && !entry.test.focus && !entry.lineage.some((/** @type {any} */ suite) => suite.focus)) return false
-      if (include.size && ![...include].every((tag) => tags.has(tag))) return false
+      const entryFocused = entry.test.focus || entry.lineage.some((/** @type {any} */ suite) => suite.focus)
+      if (focused && !this.options.ignoreFocus && !entryFocused) return false
       if ([...exclude].some((tag) => tags.has(tag))) return false
+      if (include.size && !(this.options.focusedTestsBypassIncludeTags && entryFocused)) {
+        const matchesInclude = this.options.includeTagMode === "any" ?
+          [...include].some((tag) => tags.has(tag)) :
+          [...include].every((tag) => tags.has(tag))
+        if (!matchesInclude) return false
+      }
       if (examples.length && !examples.some((/** @type {RegExp} */ pattern) => matchesExpression(pattern, entry.fullName))) return false
       return matchesLine(this.options.lineFilters || {}, entry)
     })
@@ -268,11 +291,11 @@ export class TestRunner {
       tests: [],
       errors: []
     }
-    this.emit({type: "run:start", total: selected.length})
+    await this.emit({type: "run:start", total: selected.length})
     const selectedSet = new Set(selected.map((entry) => entry.test))
     for (const suite of this.context.registry.suites) await this.runSuite(suite, [], selectedSet, result)
     if (result.counts.failed || result.noMatches) result.status = "failed"
-    this.emit({type: "run:finish", result})
+    await this.emit({type: "run:finish", result})
     return result
   }
 
@@ -285,37 +308,63 @@ export class TestRunner {
     if (!selectedDescendants.length) return
     const lineage = [...ancestors, suite]
     const timeoutMs = suite.options.timeoutMs ?? (suite.options.timeoutSeconds !== undefined ? suite.options.timeoutSeconds * 1000 : undefined) ?? this.options.timeoutMs ?? this.context.config.defaultTimeoutMs
-    /** @type {FailureState} */
-    let beforeAll = {failed: false}
-    try { await runHooks(suite.hooks.beforeAll, [], timeoutMs, `${suite.name} beforeAll`) } catch (error) { beforeAll = {failed: true, error} }
-    if (beforeAll.failed) {
-      for (const entry of selectedDescendants) this.recordSetupFailure(entry, beforeAll.error, result)
-    } else {
-      const beforeEach = lineage.flatMap((entry) => entry.hooks.beforeEach)
-      const afterEach = lineage.flatMap((entry) => entry.hooks.afterEach)
-      for (const test of suite.tests) {
-        if (selected.has(test)) await this.runTest({suite, test, lineage, fullName: [...lineage.map((entry) => entry.name), test.name].join(" ")}, beforeEach, afterEach, result)
+    const activeSuite = {suite, timeoutMs, result}
+    this.activeSuites.push(activeSuite)
+    try {
+      /** @type {FailureState} */
+      let beforeAll = {failed: false}
+      try { await runHooks(suite.hooks.beforeAll, [], timeoutMs, `${suite.name} beforeAll`) } catch (error) { beforeAll = {failed: true, error} }
+      if (beforeAll.failed) {
+        for (const entry of selectedDescendants) await this.recordSetupFailure(entry, beforeAll.error, result)
+      } else {
+        const beforeEach = lineage.flatMap((entry) => entry.hooks.beforeEach)
+        const afterEach = lineage.flatMap((entry) => entry.hooks.afterEach)
+        for (const test of suite.tests) {
+          if (selected.has(test)) await this.runTest({suite, test, lineage, fullName: buildFullName(lineage, test)}, beforeEach, afterEach, result)
+        }
+        for (const child of suite.suites) await this.runSuite(child, lineage, selected, result)
       }
-      for (const child of suite.suites) await this.runSuite(child, lineage, selected, result)
+    } finally {
+      await this.cleanupSuite(activeSuite)
+      const activeIndex = this.activeSuites.indexOf(activeSuite)
+      if (activeIndex >= 0) this.activeSuites.splice(activeIndex, 1)
     }
+  }
+
+  /**
+   * Runs active suite cleanup once in reverse scope order.
+   * @returns {Promise<void>}
+   */
+  async cleanupActiveSuites() {
+    for (const activeSuite of [...this.activeSuites].reverse()) {
+      await this.cleanupSuite(activeSuite)
+    }
+  }
+
+  /** @private @param {ActiveSuite} activeSuite @returns {Promise<void>} */
+  async cleanupSuite(activeSuite) {
+    activeSuite.cleanupPromise ??= this.runSuiteCleanup(activeSuite)
+    await activeSuite.cleanupPromise
+  }
+
+  /** @private @param {ActiveSuite} activeSuite @returns {Promise<void>} */
+  async runSuiteCleanup({suite, timeoutMs, result}) {
     const afterAllFailures = await collectCleanupFailures(
       [...suite.hooks.afterAll].reverse(), [], timeoutMs, `${suite.name} afterAll`
     )
     const afterAll = aggregateFailures({failed: false}, afterAllFailures, "afterAll")
-    if (afterAll.failed) {
-      const error = afterAll.error
-      result.errors.push({phase: "afterAll", suite: suite.name, error: errorRecord(error)})
-      result.status = "failed"
-    }
+    if (!afterAll.failed) return
+    result.errors.push({phase: "afterAll", suite: suite.name, error: errorRecord(afterAll.error)})
+    result.status = "failed"
   }
 
-  /** @private @param {any} entry @param {any} error @param {TestRunResult} result */
-  recordSetupFailure(entry, error, result) {
+  /** @private @param {any} entry @param {any} error @param {TestRunResult} result @returns {Promise<void>} */
+  async recordSetupFailure(entry, error, result) {
     /** @type {TestResult} */
     const record = {fullName: entry.fullName, status: "failed", attempts: [], error: errorRecord(error), location: entry.test.location}
     result.tests.push(record)
     result.counts.failed += 1
-    this.emit({type: "test:finish", test: record})
+    await this.emit({type: "test:finish", test: record})
   }
 
   /** @private @param {any} entry @param {import("./context.js").HookDeclaration[]} beforeEach @param {import("./context.js").HookDeclaration[]} afterEach @param {TestRunResult} result @returns {Promise<void>} */
@@ -324,7 +373,7 @@ export class TestRunner {
     const timeoutMs = entry.test.options.timeoutMs ?? (entry.test.options.timeoutSeconds !== undefined ? entry.test.options.timeoutSeconds * 1000 : undefined) ?? this.options.timeoutMs ?? this.context.config.defaultTimeoutMs
     /** @type {any} */
     const record = {fullName: entry.fullName, status: "failed", attempts: [], location: entry.test.location, tags: entry.test.tags}
-    this.emit({type: "test:start", fullName: entry.fullName})
+    await this.emit({type: "test:start", fullName: entry.fullName})
     for (let attemptNumber = 1; attemptNumber <= retries + 1; attemptNumber += 1) {
       const argsValue = await this.testArgumentResolver({context: this.context, suite: entry.suite, test: entry.test, attemptNumber})
       const args = Array.isArray(argsValue) ? argsValue : [argsValue]
@@ -337,6 +386,7 @@ export class TestRunner {
           return defaultAttemptExecutor(input)
         }}))
         if (!this.options.attemptExecutor) return await execution
+        if (this.options.attemptExecutorOwnsTimeout) return await execution
         return await withExecutorTimeout(execution, timeoutMs, entry.fullName, () => defaultInvoked)
       }, this.context.config.consoleOutput === "live")
       const attempt = {
@@ -346,7 +396,7 @@ export class TestRunner {
         error: captured.status === "failed" ? errorRecord(captured.error) : undefined
       }
       record.attempts.push(attempt)
-      this.emit({type: "attempt:finish", fullName: entry.fullName, attempt})
+      await this.emit({type: "attempt:finish", fullName: entry.fullName, attempt})
       if (captured.status === "completed") {
         record.status = "passed"
         delete record.error
@@ -357,7 +407,7 @@ export class TestRunner {
     }
     if (record.status === "failed") result.counts.failed += 1
     result.tests.push(record)
-    this.emit({type: "test:finish", test: record})
+    await this.emit({type: "test:finish", test: record})
   }
 }
 

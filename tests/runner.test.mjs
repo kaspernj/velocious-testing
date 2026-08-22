@@ -4,6 +4,12 @@ import test from "node:test"
 import {createTestContext} from "../src/index.js"
 import {PROTOCOL_MAJOR, TestRunner, runTests} from "../src/runner.js"
 
+function deferred() {
+  let resolve
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise })
+  return {promise, resolve}
+}
+
 test("runner executes inherited hooks in order and reports pass/fail", async () => {
   const context = createTestContext()
   const calls = []
@@ -108,6 +114,132 @@ test("timeout and afterAll failures preserve cleanup and accounting invariants",
   assert.deepEqual(result.counts, {total: 1, passed: 0, failed: 1, skipped: 0})
   assert.equal(result.errors[0].phase, "afterAll")
   assert.equal(result.status, "failed")
+})
+
+test("an executor-owned timeout settles cleanup before the next test begins", async () => {
+  const context = createTestContext()
+  const cleanupStarted = deferred()
+  const releaseCleanup = deferred()
+  let cleanupFinished = false
+  let secondTestStarted = false
+  let receivedTimeoutMs
+
+  context.describe("executor timeout ownership", () => {
+    context.it("times out downstream", {timeoutMs: 5}, () => {})
+    context.it("starts after cleanup", () => {})
+  })
+
+  const runner = new TestRunner({
+    attemptExecutorOwnsTimeout: true,
+    context,
+    attemptExecutor: async (input) => {
+      if (input.test.name === "starts after cleanup") {
+        secondTestStarted = true
+        assert.equal(cleanupFinished, true)
+        return
+      }
+
+      receivedTimeoutMs = input.timeoutMs
+      await new Promise((resolve) => setTimeout(resolve, input.timeoutMs * 2))
+      cleanupStarted.resolve()
+      await releaseCleanup.promise
+      cleanupFinished = true
+      throw new Error("downstream timeout after cleanup")
+    }
+  })
+
+  const runPromise = runner.run()
+  await cleanupStarted.promise
+  let orderingError
+  try {
+    assert.equal(secondTestStarted, false)
+  } catch (error) {
+    orderingError = error
+  } finally {
+    releaseCleanup.resolve()
+  }
+  const result = await runPromise
+
+  if (orderingError) throw orderingError
+  assert.equal(receivedTimeoutMs, 5)
+  assert.equal(cleanupFinished, true)
+  assert.equal(secondTestStarted, true)
+  assert.deepEqual(result.counts, {total: 2, passed: 1, failed: 1, skipped: 0})
+  assert.equal(result.tests[0].error.message, "downstream timeout after cleanup")
+})
+
+test("runner awaits asynchronous reporters before execution advances", async () => {
+  const context = createTestContext()
+  const reporterStarted = deferred()
+  const releaseReporter = deferred()
+  let testStarted = false
+
+  context.describe("reporter ordering", () => {
+    context.it("waits", () => { testStarted = true })
+  })
+
+  const runner = new TestRunner({
+    context,
+    reporter: {onEvent: async (event) => {
+      if (event.type !== "run:start") return
+      reporterStarted.resolve()
+      await releaseReporter.promise
+    }}
+  })
+  const runPromise = runner.run()
+
+  await reporterStarted.promise
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(testStarted, false)
+  releaseReporter.resolve()
+  const result = await runPromise
+
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
+})
+
+test("active suite cleanup is reverse-ordered and idempotent while setup is blocked", async () => {
+  const context = createTestContext()
+  const childSetupStarted = deferred()
+  const releaseChildSetup = deferred()
+  const calls = []
+
+  context.describe("outer", () => {
+    context.beforeAll(() => calls.push("outer beforeAll"))
+    context.afterAll(() => calls.push("outer afterAll"))
+    context.describe("child", () => {
+      context.beforeAll(async () => {
+        calls.push("child beforeAll")
+        childSetupStarted.resolve()
+        await releaseChildSetup.promise
+      })
+      context.afterAll(() => calls.push("child afterAll"))
+      context.it("continues", () => calls.push("test"))
+    })
+  })
+
+  const runner = new TestRunner({context})
+  const runPromise = runner.run()
+  await childSetupStarted.promise
+  let cleanupError
+  try {
+    await runner.cleanupActiveSuites()
+    await runner.cleanupActiveSuites()
+  } catch (error) {
+    cleanupError = error
+  } finally {
+    releaseChildSetup.resolve()
+  }
+  const result = await runPromise
+
+  if (cleanupError) throw cleanupError
+  assert.deepEqual(calls, [
+    "outer beforeAll",
+    "child beforeAll",
+    "child afterAll",
+    "outer afterAll",
+    "test"
+  ])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
 })
 
 test("suite lifecycle hooks honor inherited timeout configuration", async () => {
@@ -257,6 +389,67 @@ test("focus, tags, examples, and path-line filters select tests", async () => {
   const chosenLine = context.registry.suites[0].tests[0].location.line
   const byLine = await runTests({context, ignoreFocus: true, lineFilters: {"/repo/tests/selection.test.js": [chosenLine]}})
   assert.deepEqual(byLine.tests.map((entry) => entry.fullName), ["selection ordinary"])
+})
+
+test("include tags support any-match mode and focused include bypass without bypassing exclusions", async () => {
+  const anyContext = createTestContext()
+  anyContext.describe("any tags", () => {
+    anyContext.it("unit", {tags: ["unit"]}, () => {})
+    anyContext.it("api", {tags: ["api"]}, () => {})
+    anyContext.it("both", {tags: ["unit", "api"]}, () => {})
+  })
+
+  const defaultAll = await runTests({context: anyContext, includeTags: ["unit", "api"]})
+  assert.deepEqual(defaultAll.tests.map((entry) => entry.fullName), ["any tags both"])
+
+  const any = await runTests({context: anyContext, includeTags: ["unit", "api"], includeTagMode: "any"})
+  assert.deepEqual(any.tests.map((entry) => entry.fullName), ["any tags unit", "any tags api", "any tags both"])
+
+  const focusContext = createTestContext()
+  focusContext.describe("focus bypass", () => {
+    focusContext.fit("eligible", {tags: ["other"]}, () => {})
+    focusContext.fit("still excluded", {tags: ["other", "slow"]}, () => {})
+  })
+  const focused = await runTests({
+    context: focusContext,
+    includeTags: ["api"],
+    excludeTags: ["slow"],
+    focusedTestsBypassIncludeTags: true
+  })
+
+  assert.deepEqual(focused.tests.map((entry) => entry.fullName), ["focus bypass eligible"])
+})
+
+test("an empty structural suite does not alter names or exact example and line selection", async () => {
+  const filePath = "/repo/tests/adapter-root.test.js"
+  let line = 40
+  const context = createTestContext({declarationLocator: () => ({filePath, line: line++})})
+  context.describe("", () => {
+    context.describe("named", () => {
+      context.it("works", () => {})
+    })
+  })
+  const testLine = context.registry.suites[0].suites[0].tests[0].location.line
+
+  const result = await runTests({
+    context,
+    examples: [/^named works$/u],
+    lineFilters: {[filePath]: [testLine]}
+  })
+
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), ["named works"])
+})
+
+test("an empty test name retains its separator and exact example behavior", async () => {
+  const context = createTestContext()
+  context.describe("suite", () => {
+    context.it("", () => {})
+  })
+
+  const result = await runTests({context, examples: [/^suite $/u]})
+
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), ["suite "])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
 })
 
 test("example filters are repeatable with global and sticky expressions without changing lastIndex", async () => {

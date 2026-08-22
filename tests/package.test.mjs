@@ -28,7 +28,12 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
     for (const entry of ["src/index.js", "src/runner.js"]) {
       const result = await bundle({entryPoints: [entry], bundle: true, format: "esm", platform: "browser", write: false, metafile: true})
       assert.ok(result.outputFiles[0].text.length > 0)
-      assert.equal(Object.keys(result.metafile.inputs).some((input) => input.startsWith("node:")), false)
+      const inputPaths = Object.keys(result.metafile.inputs)
+      assert.equal(inputPaths.some((input) => input.startsWith("node:")), false)
+      assert.doesNotMatch(result.outputFiles[0].text, /\bimport\.meta\b/u)
+      for (const inputPath of inputPaths) {
+        assert.doesNotMatch(await readFile(inputPath, "utf8"), /\bimport\.meta\b/u, `${inputPath} contains raw import.meta`)
+      }
     }
   } finally {
     await rm(directory, {recursive: true, force: true})
