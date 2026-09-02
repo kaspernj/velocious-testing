@@ -176,6 +176,29 @@ test("table declarations fail clearly for invalid rows and templates", () => {
   })
 })
 
+test("%j rejects non-JSON scalar and positional row values", () => {
+  const invalid = [
+    ["undefined", undefined, [undefined], "%j"],
+    ["function", () => {}, ["prefix", () => {}], "%s %j"],
+    ["symbol", Symbol("value"), ["prefix", 2, Symbol("value")], "%s %d %j"]
+  ]
+
+  for (const [label, scalar, positional, template] of invalid) {
+    for (const [form, rows, name] of [
+      ["scalar", [scalar], "%j"],
+      ["positional", [positional], template]
+    ]) {
+      const context = createTestContext()
+      context.describe(`${label} ${form}`, () => {
+        assert.throws(
+          () => context.it.each(rows)(name, () => {}),
+          /Table row 0 token %j could not be serialized as JSON/
+        )
+      })
+    }
+  }
+})
+
 test("table declarations reject empty rows before template validation or registration", () => {
   const context = createTestContext()
 

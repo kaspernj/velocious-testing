@@ -97,7 +97,8 @@ function requiredCallback(kind, name, arg1, arg2) {
 function jsonTableValue(value, token, rowIndex) {
   try {
     const serialized = JSON.stringify(value)
-    return serialized === undefined ? "undefined" : serialized
+    if (serialized === undefined) throw new Error()
+    return serialized
   } catch {
     throw new Error(`Table row ${rowIndex} token ${token} could not be serialized as JSON`)
   }
