@@ -35,7 +35,7 @@ The browser/Metro-safe root exports `describe`, `it`, `fit`, all four lifecycle 
 
 `@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
 
-Include tags require every requested tag by default; `includeTagMode: "any"` selects a test with at least one requested tag. `focusedTestsBypassIncludeTags: true` keeps focused tests eligible when includes do not match, while exclusions still win. A custom executor may set `attemptExecutorOwnsTimeout: true` to receive the declared `timeoutMs` without the kernel abandoning it at that deadline; that executor must apply its own timeout and settle only after its bounded cleanup. `TestRunner#cleanupActiveSuites()` idempotently runs active `afterAll` hooks once in reverse scope order for interruption handling. An empty suite name is structural and is omitted from full test names, allowing adapters to represent global hooks without changing selection or reporting.
+Include tags require every requested tag by default; `includeTagMode: "any"` selects a test with at least one requested tag. `focusedTestsBypassIncludeTags: true` keeps focused tests eligible when includes do not match, while exclusions still win. A custom executor may set `attemptExecutorOwnsTimeout: true` to receive the declared `timeoutMs` without the kernel abandoning it at that deadline; that executor must apply its own timeout and settle only after its bounded cleanup. `TestRunner#cleanupActiveSuites()` idempotently runs active `afterAll` hooks once in reverse scope order for interruption handling. Empty suite names retain their legacy separators by default; adapters that use unnamed structural suites can set `omitEmptySuiteNames: true` to omit them consistently from full names, example matching, and reporting.
 
 ```js
 import {createTestContext} from "@velocious/testing"
@@ -46,7 +46,7 @@ context.describe("isolated", () => context.it("works", () => {}))
 const result = await runTests({context})
 ```
 
-`installGlobals(target?, context?)` installs bound DSL methods explicitly; importing the package never mutates globals. Node-only discovery, importing, argument parsing, source locations, console reporting, and `runNodeTests()` live at `@velocious/testing/node`. `runNodeTests()` forwards the programmatic runner selection, timeout-ownership, collaborator, and reporting options to the same kernel.
+`installGlobals(target?, context?)` installs bound DSL methods explicitly; importing the package never mutates globals. Node-only discovery, importing, argument parsing, source locations, console reporting, and `runNodeTests()` live at `@velocious/testing/node`. `runNodeTests()` forwards the programmatic runner selection, naming, timeout-ownership, collaborator, and reporting options to the same kernel.
 
 ## Compatibility and plugins
 

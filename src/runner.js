@@ -40,6 +40,7 @@ export {PROTOCOL_MAJOR}
  * @property {RegExp[]} [examples]
  * @property {Record<string, number[]>} [lineFilters]
  * @property {boolean} [ignoreFocus]
+ * @property {boolean} [omitEmptySuiteNames]
  * @property {"all" | "any"} [includeTagMode]
  * @property {boolean} [focusedTestsBypassIncludeTags]
  * @property {number} [retries]
@@ -204,19 +205,20 @@ function hasFocus(suite) {
   return suite.focus || suite.tests.some((/** @type {any} */ entry) => entry.focus) || suite.suites.some(hasFocus)
 }
 
-/** @param {any[]} lineage @param {any} test @returns {string} */
-function buildFullName(lineage, test) {
+/** @param {any[]} lineage @param {any} test @param {boolean} [omitEmptySuiteNames] @returns {string} */
+function buildFullName(lineage, test, omitEmptySuiteNames = false) {
+  const suiteNames = lineage.map((entry) => entry.name)
   return [
-    ...lineage.map((entry) => entry.name).filter((name) => name !== ""),
+    ...(omitEmptySuiteNames ? suiteNames.filter((name) => name !== "") : suiteNames),
     test.name
   ].join(" ")
 }
 
-/** @param {any} suite @param {any[]} ancestors @param {any[]} output */
-function flatten(suite, ancestors, output) {
+/** @param {any} suite @param {any[]} ancestors @param {any[]} output @param {boolean} [omitEmptySuiteNames] */
+function flatten(suite, ancestors, output, omitEmptySuiteNames = false) {
   const lineage = [...ancestors, suite]
-  for (const test of suite.tests) output.push({suite, test, lineage, fullName: buildFullName(lineage, test)})
-  for (const child of suite.suites) flatten(child, lineage, output)
+  for (const test of suite.tests) output.push({suite, test, lineage, fullName: buildFullName(lineage, test, omitEmptySuiteNames)})
+  for (const child of suite.suites) flatten(child, lineage, output, omitEmptySuiteNames)
 }
 
 /** @param {Record<string, number[]>} filters @param {any} entry @returns {boolean} */
@@ -263,7 +265,7 @@ export class TestRunner {
   async run() {
     /** @type {any[]} */
     const all = []
-    for (const suite of this.context.registry.suites) flatten(suite, [], all)
+    for (const suite of this.context.registry.suites) flatten(suite, [], all, this.options.omitEmptySuiteNames)
     const focused = this.context.registry.suites.some((/** @type {any} */ suite) => hasFocus(suite))
     const include = new Set(normalizeTags(this.options.includeTags))
     const exclude = new Set(normalizeTags(this.options.excludeTags ?? this.context.config.excludeTags))
@@ -303,7 +305,7 @@ export class TestRunner {
   async runSuite(suite, ancestors, selected, result) {
     /** @type {any[]} */
     const descendants = []
-    flatten(suite, ancestors, descendants)
+    flatten(suite, ancestors, descendants, this.options.omitEmptySuiteNames)
     const selectedDescendants = descendants.filter((entry) => selected.has(entry.test))
     if (!selectedDescendants.length) return
     const lineage = [...ancestors, suite]
@@ -320,7 +322,10 @@ export class TestRunner {
         const beforeEach = lineage.flatMap((entry) => entry.hooks.beforeEach)
         const afterEach = lineage.flatMap((entry) => entry.hooks.afterEach)
         for (const test of suite.tests) {
-          if (selected.has(test)) await this.runTest({suite, test, lineage, fullName: buildFullName(lineage, test)}, beforeEach, afterEach, result)
+          if (selected.has(test)) {
+            const fullName = buildFullName(lineage, test, this.options.omitEmptySuiteNames)
+            await this.runTest({suite, test, lineage, fullName}, beforeEach, afterEach, result)
+          }
         }
         for (const child of suite.suites) await this.runSuite(child, lineage, selected, result)
       }

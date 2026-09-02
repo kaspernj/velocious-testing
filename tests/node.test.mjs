@@ -158,6 +158,34 @@ test("runNodeTests forwards ignoreFocus to include focused and ordinary tests", 
   }
 })
 
+test("runNodeTests forwards explicit empty suite name omission", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-empty-suite-"))
+  try {
+    const testPath = path.join(root, "empty-suite.test.mjs")
+    await writeFile(testPath, "")
+    const context = createTestContext()
+
+    const result = await runNodeTests({
+      context,
+      cwd: root,
+      candidates: [testPath],
+      omitEmptySuiteNames: true,
+      examples: [/^named works$/u],
+      importer: async () => {
+        context.describe("", () => {
+          context.describe("named", () => {
+            context.it("works", () => {})
+          })
+        })
+      }
+    })
+
+    assert.deepEqual(result.tests.map((entry) => entry.fullName), ["named works"])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test("runNodeTests forwards executor-owned timeout without advancing before cleanup", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-timeout-"))
   const cleanupStarted = deferred()

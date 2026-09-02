@@ -192,6 +192,7 @@ export async function runNodeTests(options = {}) {
     excludeTags: options.excludeTags,
     focusedTestsBypassIncludeTags: options.focusedTestsBypassIncludeTags,
     ignoreFocus: options.ignoreFocus,
+    omitEmptySuiteNames: options.omitEmptySuiteNames,
     examples,
     lineFilters,
     retries: options.retries,

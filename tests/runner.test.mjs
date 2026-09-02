@@ -420,7 +420,19 @@ test("include tags support any-match mode and focused include bypass without byp
   assert.deepEqual(focused.tests.map((entry) => entry.fullName), ["focus bypass eligible"])
 })
 
-test("an empty structural suite does not alter names or exact example and line selection", async () => {
+test("empty suite names preserve legacy full names and exact example matching by default", async () => {
+  const context = createTestContext()
+  context.describe("", () => {
+    context.it("test", () => {})
+  })
+
+  const result = await runTests({context, examples: [/^ test$/u]})
+
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), [" test"])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
+})
+
+test("empty suite names can be omitted explicitly for structural adapter suites", async () => {
   const filePath = "/repo/tests/adapter-root.test.js"
   let line = 40
   const context = createTestContext({declarationLocator: () => ({filePath, line: line++})})
@@ -433,6 +445,7 @@ test("an empty structural suite does not alter names or exact example and line s
 
   const result = await runTests({
     context,
+    omitEmptySuiteNames: true,
     examples: [/^named works$/u],
     lineFilters: {[filePath]: [testLine]}
   })
