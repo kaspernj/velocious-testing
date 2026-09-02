@@ -391,6 +391,191 @@ test("focus, tags, examples, and path-line filters select tests", async () => {
   assert.deepEqual(byLine.tests.map((entry) => entry.fullName), ["selection ordinary"])
 })
 
+test("skip and todo declarations never run bodies or inherited lifecycle hooks", async () => {
+  const context = createTestContext()
+  const calls = []
+  const events = []
+
+  context.describe("ordinary", () => {
+    context.beforeEach(() => calls.push("ordinary beforeEach"))
+    context.afterEach(() => calls.push("ordinary afterEach"))
+    context.it("runs", () => calls.push("ordinary test"))
+    context.it.skip("skipped test", () => calls.push("skipped test"))
+    context.it.todo("todo test")
+  })
+  context.describe.skip("skipped suite", () => {
+    calls.push("skipped declaration")
+    context.beforeAll(() => calls.push("skipped beforeAll"))
+    context.afterAll(() => calls.push("skipped afterAll"))
+    context.beforeEach(() => calls.push("skipped beforeEach"))
+    context.afterEach(() => calls.push("skipped afterEach"))
+    context.it("child", () => calls.push("skipped child"))
+  })
+  context.describe.todo("todo suite", () => {
+    calls.push("todo declaration")
+    context.beforeAll(() => calls.push("todo beforeAll"))
+    context.afterAll(() => calls.push("todo afterAll"))
+    context.it("child", () => calls.push("todo child"))
+  })
+
+  const result = await runTests({context, reporter: {onEvent: (event) => events.push(event)}})
+
+  assert.deepEqual(calls, [
+    "skipped declaration",
+    "todo declaration",
+    "ordinary beforeEach", "ordinary test", "ordinary afterEach"
+  ])
+  assert.deepEqual(result.tests.map((entry) => [entry.fullName, entry.status]), [["ordinary runs", "passed"]])
+  assert.deepEqual(result.nonRunTests.map((entry) => [entry.fullName, entry.status]), [
+    ["ordinary skipped test", "skipped"],
+    ["ordinary todo test", "todo"],
+    ["skipped suite child", "skipped"],
+    ["todo suite child", "todo"]
+  ])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 4})
+  assert.equal(result.noMatches, false)
+  assert.equal(result.status, "passed")
+  assert.deepEqual(events.filter((event) => event.type === "test:skip").map((event) => event.test), result.nonRunTests)
+  assert.equal(events.filter((event) => event.type === "test:start").length, 1)
+  assert.equal(events.filter((event) => event.type === "test:finish").length, 1)
+})
+
+test("runnable focus selects nested only declarations but cannot revive explicit non-runs", async () => {
+  const context = createTestContext()
+  const calls = []
+
+  context.describe("outside", () => {
+    context.it("ordinary", () => calls.push("outside ordinary"))
+    context.it.skip("focused skip", {focus: true}, () => calls.push("focused skip"))
+  })
+  context.describe.skip("skipped", {focus: true}, () => {
+    context.it.only("focused child", () => calls.push("skipped focused child"))
+  })
+  context.describe("focus root", () => {
+    context.describe.only("selected suite", () => {
+      context.it("selected descendant", () => calls.push("selected descendant"))
+      context.describe("nested", () => context.it("nested descendant", () => calls.push("nested descendant")))
+      context.it.todo("selected todo", {focus: true})
+    })
+    context.describe("unselected suite", () => {
+      context.it("unselected descendant", () => calls.push("unselected descendant"))
+    })
+  })
+
+  const result = await runTests({context})
+
+  assert.deepEqual(calls, ["selected descendant", "nested descendant"])
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), [
+    "focus root selected suite selected descendant",
+    "focus root selected suite nested nested descendant"
+  ])
+  assert.deepEqual(result.nonRunTests.map((entry) => entry.fullName), [
+    "outside focused skip",
+    "skipped focused child",
+    "focus root selected suite selected todo"
+  ])
+  assert.equal(result.counts.skipped, 5)
+})
+
+test("focus markers inherited by skipped and todo leaves do not activate global focus", async () => {
+  const context = createTestContext()
+  const calls = []
+
+  context.describe("runnable", () => {
+    context.it("still runs", () => calls.push("runnable"))
+  })
+  context.describe.skip("disabled", () => {
+    context.it.only("focused skipped child", () => calls.push("disabled child"))
+    context.describe.todo("nested todo", () => {
+      context.it.only("focused skip-inherited child", () => calls.push("disabled nested child"))
+    })
+  })
+  context.describe.todo("planned", () => {
+    context.describe.only("focused todo suite", () => {
+      context.it("todo-inherited child", () => calls.push("planned child"))
+      context.describe.skip("nested skip", () => {
+        context.it.only("focused todo-inherited child", () => calls.push("planned nested child"))
+      })
+    })
+  })
+
+  const disabled = context.registry.suites[1]
+  const planned = context.registry.suites[2]
+  assert.equal(disabled.tests[0].focus, true)
+  assert.equal(disabled.tests[0].state, "skip")
+  assert.equal(disabled.suites[0].tests[0].focus, true)
+  assert.equal(disabled.suites[0].tests[0].state, "skip")
+  assert.equal(planned.suites[0].focus, true)
+  assert.equal(planned.suites[0].tests[0].state, "todo")
+  assert.equal(planned.suites[0].suites[0].tests[0].focus, true)
+  assert.equal(planned.suites[0].suites[0].tests[0].state, "todo")
+
+  const result = await runTests({context})
+
+  assert.deepEqual(calls, ["runnable"])
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), ["runnable still runs"])
+  assert.deepEqual(result.nonRunTests.map((entry) => [entry.fullName, entry.status]), [
+    ["disabled focused skipped child", "skipped"],
+    ["disabled nested todo focused skip-inherited child", "skipped"],
+    ["planned focused todo suite todo-inherited child", "todo"],
+    ["planned focused todo suite nested skip focused todo-inherited child", "todo"]
+  ])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 4})
+  assert.equal(result.noMatches, false)
+  assert.equal(result.status, "passed")
+})
+
+test("non-run selection composes with tags and examples without double counting or false noMatches", async () => {
+  const context = createTestContext()
+  const events = []
+  context.describe("selection", () => {
+    context.it("filtered", {tags: "slow"}, () => {})
+    context.it.skip("selected skip", {tags: "unit"})
+    context.it.todo("selected todo", {tags: "unit"})
+    context.it("selected run", {tags: "unit"}, () => {})
+  })
+
+  const selected = await runTests({
+    context,
+    includeTags: ["unit"],
+    examples: [/selected/u],
+    reporter: {onEvent: (event) => events.push(event)}
+  })
+  assert.deepEqual(selected.counts, {total: 1, passed: 1, failed: 0, skipped: 3})
+  assert.deepEqual(selected.tests.map((entry) => entry.fullName), ["selection selected run"])
+  assert.deepEqual(selected.nonRunTests.map((entry) => [entry.fullName, entry.status]), [
+    ["selection selected skip", "skipped"],
+    ["selection selected todo", "todo"]
+  ])
+  assert.deepEqual(selected.nonRunTests.map((entry) => entry.tags), [["unit"], ["unit"]])
+  assert.equal(events.filter((event) => event.type === "test:skip").length, 2)
+
+  const onlyTodo = await runTests({context, includeTags: ["unit"], examples: [/selected todo/u]})
+  assert.equal(onlyTodo.noMatches, false)
+  assert.equal(onlyTodo.status, "passed")
+  assert.deepEqual(onlyTodo.tests, [])
+  assert.deepEqual(onlyTodo.nonRunTests.map((entry) => entry.status), ["todo"])
+  assert.deepEqual(onlyTodo.counts, {total: 0, passed: 0, failed: 0, skipped: 4})
+})
+
+test("table tests execute with row arguments and compose with options", async () => {
+  const context = createTestContext()
+  const received = []
+  context.describe("table execution", {tags: "outer"}, () => {
+    context.it.each([["array", 2], "scalar", {kind: "object"}])("row %# %s", {tags: "table"}, (...args) => received.push(args))
+  })
+
+  const result = await runTests({context, includeTags: ["outer", "table"]})
+
+  assert.deepEqual(received, [["array", 2], ["scalar"], [{kind: "object"}]])
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), [
+    "table execution row 0 array",
+    "table execution row 1 scalar",
+    "table execution row 2 [object Object]"
+  ])
+  assert.ok(result.tests.every((entry) => entry.tags.join(",") === "outer,table"))
+})
+
 test("include tags support any-match mode and focused include bypass without bypassing exclusions", async () => {
   const anyContext = createTestContext()
   anyContext.describe("any tags", () => {
@@ -418,6 +603,25 @@ test("include tags support any-match mode and focused include bypass without byp
   })
 
   assert.deepEqual(focused.tests.map((entry) => entry.fullName), ["focus bypass eligible"])
+})
+
+test("only semantics compose through nested suites", async () => {
+  const context = createTestContext()
+  context.describe("ordinary suite", () => context.it("filtered", () => {}))
+  context.describe.only("focused suite", () => {
+    context.it("suite selected", () => {})
+    context.describe("nested", () => context.it("nested selected", () => {}))
+  })
+  context.describe("other suite", () => context.it.only("test selected", () => {}))
+
+  const result = await runTests({context})
+
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), [
+    "focused suite suite selected",
+    "focused suite nested nested selected",
+    "other suite test selected"
+  ])
+  assert.deepEqual(result.counts, {total: 3, passed: 3, failed: 0, skipped: 1})
 })
 
 test("empty suite names preserve legacy full names and exact example matching by default", async () => {
@@ -495,4 +699,24 @@ test("no matches fail explicitly and repeated invocations do not leak accounting
 
   context.reset()
   assert.equal(context.registry.suites.length, 0)
+})
+
+test("repeated runs and resets do not leak non-run declaration accounting", async () => {
+  const isolated = createTestContext()
+  isolated.describe("repeat states", () => {
+    isolated.it.skip("skipped")
+    isolated.it.todo("todo")
+  })
+  const runner = new TestRunner({context: isolated})
+
+  for (const result of [await runner.run(), await runner.run()]) {
+    assert.deepEqual(result.counts, {total: 0, passed: 0, failed: 0, skipped: 2})
+    assert.deepEqual(result.nonRunTests.map((entry) => entry.status), ["skipped", "todo"])
+  }
+
+  isolated.reset()
+  isolated.describe("fresh", () => isolated.it("runs", () => {}))
+  const fresh = await runner.run()
+  assert.deepEqual(fresh.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
+  assert.deepEqual(fresh.nonRunTests, [])
 })

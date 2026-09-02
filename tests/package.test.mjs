@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import {execFile} from "node:child_process"
-import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
+import {cp, mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import {promisify} from "node:util"
@@ -69,6 +69,25 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
   try {
     await writeFile(path.join(fixture, "package.json"), JSON.stringify({name: "standalone-smoke", private: true, type: "module"}))
     await exec("npm", ["install", "--ignore-scripts", "--cache", cacheDirectory, tarball], {cwd: fixture})
+    const installedPackage = path.join(fixture, "node_modules", "@velocious", "testing")
+    const physicalCopy = path.join(fixture, "physical-copy")
+    await cp(installedPackage, physicalCopy, {recursive: true})
+    const compatibleCopies = await exec("node", ["--input-type=module", "--eval", [
+      `const first = await import(${JSON.stringify(path.join(installedPackage, "build", "index.js"))});`,
+      `const second = await import(${JSON.stringify(path.join(physicalCopy, "build", "index.js"))});`,
+      'if (first.defaultTestContext !== second.defaultTestContext) throw new Error("schema-2 copies split the default context")',
+      'first.describe("shared physical tree", () => first.it("visible", () => {}));',
+      'if (second.defaultTestContext.registry.suites.at(-1)?.name !== "shared physical tree") throw new Error("registration was not shared")',
+      'console.log(`${first.defaultTestContext.protocolMajor}/${first.defaultTestContext.schemaVersion}`)'
+    ].join("\n")], {cwd: fixture})
+    assert.equal(compatibleCopies.stdout.trim(), "1/2")
+    await exec("node", ["--input-type=module", "--eval", [
+      'globalThis[Symbol.for("@velocious/testing.default-context.v1")] = {protocolMajor: 1, schemaVersion: 1, registry: {suites: []}};',
+      `await import(${JSON.stringify(path.join(physicalCopy, "build", "index.js"))}).then(`,
+      '  () => { throw new Error("schema mismatch unexpectedly registered") },',
+      '  (error) => { if (!/found protocol 1\\/schema 1, expected protocol 1\\/schema 2/.test(error.message)) throw error }',
+      ')'
+    ].join("\n")], {cwd: fixture})
     await mkdir(path.join(fixture, "tests"))
     await writeFile(path.join(fixture, "tests", "smoke.test.js"), [
       'import {describe, expect, it} from "@velocious/testing"',
@@ -132,6 +151,54 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
         /^✗ standalone setup does not run \(not run\)$/mu.test(error.stdout) &&
         /0 passed, 1 failed, 1 total/.test(error.stdout) && /setup blocked/.test(error.stderr)
     )
+    await writeFile(path.join(fixture, "tests", "stage1.test.js"), [
+      'import {describe, fdescribe, fit, it, test, xdescribe, xit, xtest} from "@velocious/testing"',
+      'describe("focus", () => {',
+      '  it("ordinary", () => {})',
+      '  fit("fit", () => {})',
+      '  it.only("it only", () => {})',
+      '  xit("xit", () => { throw new Error("xit ran") })',
+      '  xtest("xtest", () => { throw new Error("xtest ran") })',
+      '  it.todo("todo")',
+      '})',
+      'fdescribe("table", () => {',
+      '  test("test alias", () => {})',
+      '  it.each([["array", 2], {kind: "object"}])("row %# %s", () => {})',
+      '})',
+      'xdescribe("skipped suite", () => {',
+      '  it("child", () => { throw new Error("skipped suite ran") })',
+      '})',
+      'describe.todo("todo suite", () => {',
+      '  it("child", () => { throw new Error("todo suite ran") })',
+      '})'
+    ].join("\n"))
+    const stageOneProbe = await exec("node", ["--input-type=module", "--eval", [
+      'import {runNodeTests} from "@velocious/testing/node";',
+      'const focused = await runNodeTests({candidates: ["tests/stage1.test.js"]});',
+      'const all = await runNodeTests({candidates: ["tests/stage1.test.js"], ignoreFocus: true});',
+      'const view = (result) => ({status: result.status, counts: result.counts, tests: result.tests.map((entry) => entry.fullName), nonRuns: result.nonRunTests.map((entry) => [entry.fullName, entry.status])});',
+      'console.log(JSON.stringify({focused: view(focused), all: view(all)}));'
+    ].join("\n")], {cwd: fixture})
+    assert.deepEqual(JSON.parse(stageOneProbe.stdout), {
+      focused: {
+        status: "passed",
+        counts: {total: 5, passed: 5, failed: 0, skipped: 6},
+        tests: ["focus fit", "focus it only", "table test alias", "table row 0 array", "table row 1 [object Object]"],
+        nonRuns: []
+      },
+      all: {
+        status: "passed",
+        counts: {total: 6, passed: 6, failed: 0, skipped: 5},
+        tests: ["focus ordinary", "focus fit", "focus it only", "table test alias", "table row 0 array", "table row 1 [object Object]"],
+        nonRuns: [
+          ["focus xit", "skipped"],
+          ["focus xtest", "skipped"],
+          ["focus todo", "todo"],
+          ["skipped suite child", "skipped"],
+          ["todo suite child", "todo"]
+        ]
+      }
+    })
     await assert.rejects(
       exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["--example", "missing"], {cwd: fixture}),
       (error) => error.code === 1 && /No tests matched/.test(error.stderr)

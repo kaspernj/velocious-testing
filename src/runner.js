@@ -1,8 +1,8 @@
 // @ts-check
 
-import {defaultTestContext, normalizeTags, PROTOCOL_MAJOR} from "./context.js"
+import {CONTEXT_SCHEMA_VERSION, defaultTestContext, normalizeTags, PROTOCOL_MAJOR} from "./context.js"
 
-export {PROTOCOL_MAJOR}
+export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
 
 /** @typedef {"log" | "info" | "warn" | "error" | "debug"} ConsoleMethod */
 /** @typedef {import("./context.js").TestContext} TestContext */
@@ -11,8 +11,9 @@ export {PROTOCOL_MAJOR}
 /** @typedef {{name: string, message: string, stack?: string, errors?: TestErrorRecord[]}} TestErrorRecord */
 /** @typedef {{attemptNumber: number, durationMs: number, consoleOutput: string, error?: TestErrorRecord}} TestAttemptResult */
 /** @typedef {{fullName: string, status: "passed" | "failed", attempts: TestAttemptResult[], location: import("./context.js").DeclarationLocation, tags?: string[], error?: TestErrorRecord}} TestResult */
+/** @typedef {{fullName: string, status: "skipped" | "todo", location: import("./context.js").DeclarationLocation, tags: string[]}} NonRunTestResult */
 /** @typedef {{total: number, passed: number, failed: number, skipped: number}} TestRunCounts */
-/** @typedef {{protocolMajor: number, status: "passed" | "failed", noMatches: boolean, counts: TestRunCounts, tests: TestResult[], errors: Array<{phase: string, suite: string, error: TestErrorRecord}>}} TestRunResult */
+/** @typedef {{protocolMajor: number, status: "passed" | "failed", noMatches: boolean, counts: TestRunCounts, tests: TestResult[], nonRunTests: NonRunTestResult[], errors: Array<{phase: string, suite: string, error: TestErrorRecord}>}} TestRunResult */
 /** @typedef {{protocolMajor: number, timestamp: number, type: string, [key: string]: any}} RunnerEvent */
 /** @typedef {{onEvent: (event: RunnerEvent) => void | Promise<void>}} Reporter */
 /** @typedef {{failed: false} | {failed: true, error: any}} FailureState */
@@ -200,11 +201,6 @@ function withExecutorTimeout(promise, timeoutMs, name, defaultInvoked) {
   })
 }
 
-/** @param {any} suite @returns {boolean} */
-function hasFocus(suite) {
-  return suite.focus || suite.tests.some((/** @type {any} */ entry) => entry.focus) || suite.suites.some(hasFocus)
-}
-
 /** @param {any[]} lineage @param {any} test @param {boolean} [omitEmptySuiteNames] @returns {string} */
 function buildFullName(lineage, test, omitEmptySuiteNames = false) {
   const suiteNames = lineage.map((entry) => entry.name)
@@ -238,17 +234,23 @@ function matchesExpression(expression, value) {
   return new RegExp(expression.source, expression.flags).test(value)
 }
 
+/** @param {any} entry @returns {boolean} */
+function isFocused(entry) {
+  return entry.test.focus || entry.lineage.some((/** @type {any} */ suite) => suite.focus)
+}
+
 export class TestRunner {
   /** @param {TestRunnerOptions} [options] */
   constructor(options = {}) {
     this.options = options
     this.context = options.context || defaultTestContext
     if (this.context.protocolMajor !== PROTOCOL_MAJOR) throw new Error(`Unsupported test context protocol major: ${this.context.protocolMajor}`)
+    if (this.context.schemaVersion !== CONTEXT_SCHEMA_VERSION) throw new Error(`Unsupported test context schema version: ${this.context.schemaVersion}`)
     if (options.includeTagMode !== undefined && !["all", "any"].includes(options.includeTagMode)) {
       throw new Error(`Invalid includeTagMode: ${options.includeTagMode}`)
     }
     this.attemptExecutor = options.attemptExecutor || ((input) => defaultAttemptExecutor(input))
-    this.testArgumentResolver = options.testArgumentResolver || (() => [])
+    this.testArgumentResolver = options.testArgumentResolver || (({test}) => test.rowArguments)
     this.reporter = options.reporter || {onEvent() {}}
     /** @type {ActiveSuite[]} */
     this.activeSuites = []
@@ -266,13 +268,13 @@ export class TestRunner {
     /** @type {any[]} */
     const all = []
     for (const suite of this.context.registry.suites) flatten(suite, [], all, this.options.omitEmptySuiteNames)
-    const focused = this.context.registry.suites.some((/** @type {any} */ suite) => hasFocus(suite))
+    const focused = all.some((entry) => entry.test.state === "run" && isFocused(entry))
     const include = new Set(normalizeTags(this.options.includeTags))
     const exclude = new Set(normalizeTags(this.options.excludeTags ?? this.context.config.excludeTags))
     const examples = this.options.examples || []
     const selected = all.filter((/** @type {any} */ entry) => {
       const tags = new Set(entry.test.tags)
-      const entryFocused = entry.test.focus || entry.lineage.some((/** @type {any} */ suite) => suite.focus)
+      const entryFocused = isFocused(entry)
       if (focused && !this.options.ignoreFocus && !entryFocused) return false
       if ([...exclude].some((tag) => tags.has(tag))) return false
       if (include.size && !(this.options.focusedTestsBypassIncludeTags && entryFocused)) {
@@ -284,17 +286,31 @@ export class TestRunner {
       if (examples.length && !examples.some((/** @type {RegExp} */ pattern) => matchesExpression(pattern, entry.fullName))) return false
       return matchesLine(this.options.lineFilters || {}, entry)
     })
+    const runnable = selected.filter((entry) => entry.test.state === "run")
+    const nonRunnable = selected.filter((entry) => entry.test.state !== "run")
     /** @type {TestRunResult} */
     const result = {
       protocolMajor: PROTOCOL_MAJOR,
       status: "passed",
       noMatches: selected.length === 0,
-      counts: {total: selected.length, passed: 0, failed: 0, skipped: all.length - selected.length},
+      counts: {total: runnable.length, passed: 0, failed: 0, skipped: all.length - runnable.length},
       tests: [],
+      nonRunTests: [],
       errors: []
     }
-    await this.emit({type: "run:start", total: selected.length})
-    const selectedSet = new Set(selected.map((entry) => entry.test))
+    await this.emit({type: "run:start", total: runnable.length})
+    for (const entry of nonRunnable) {
+      /** @type {NonRunTestResult} */
+      const record = {
+        fullName: entry.fullName,
+        status: entry.test.state === "todo" ? "todo" : "skipped",
+        location: entry.test.location,
+        tags: entry.test.tags
+      }
+      result.nonRunTests.push(record)
+      await this.emit({type: "test:skip", test: record})
+    }
+    const selectedSet = new Set(runnable.map((entry) => entry.test))
     for (const suite of this.context.registry.suites) await this.runSuite(suite, [], selectedSet, result)
     if (result.counts.failed || result.noMatches) result.status = "failed"
     await this.emit({type: "run:finish", result})
