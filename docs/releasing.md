@@ -48,4 +48,4 @@ npm run release:patch
 
 The helper derives `0.0.1` and later patches from the latest published annotated tag. Before every release, run a fresh `npm ci`, the complete validation suite, `npm pack --dry-run --json`, and the standalone installed-tarball smoke in the canonical service. Confirm authentication and registry intent explicitly.
 
-Feature work leaves version `0.0.0` unchanged until the bootstrap release. Never hand-edit generated build declarations, publish from an unreviewed tree, or add framework dependencies during release preparation.
+Feature work leaves the current released version unchanged; only `npm run release:patch` updates it during an ordinary patch release. Never hand-edit generated build declarations, publish from an unreviewed tree, or add framework dependencies during release preparation.

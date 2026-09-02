@@ -4,8 +4,11 @@ import test from "node:test"
 
 test("package metadata exposes only supported ESM surfaces and no Velocious dependency", async () => {
   const packageData = JSON.parse(await readFile("package.json", "utf8"))
+  const lock = JSON.parse(await readFile("package-lock.json", "utf8"))
   assert.equal(packageData.name, "@velocious/testing")
-  assert.equal(packageData.version, "0.0.0")
+  assert.match(packageData.version, /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/u)
+  assert.equal(lock.version, packageData.version)
+  assert.equal(lock.packages[""].version, packageData.version)
   assert.equal(packageData.type, "module")
   assert.equal(packageData.license, "MIT")
   assert.equal(packageData.engines.node, ">=20")
