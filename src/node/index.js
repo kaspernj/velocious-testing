@@ -188,13 +188,18 @@ export async function runNodeTests(options = {}) {
   const result = await runTests({
     context,
     includeTags: options.includeTags,
+    includeTagMode: options.includeTagMode,
     excludeTags: options.excludeTags,
+    focusedTestsBypassIncludeTags: options.focusedTestsBypassIncludeTags,
+    ignoreFocus: options.ignoreFocus,
+    omitEmptySuiteNames: options.omitEmptySuiteNames,
     examples,
     lineFilters,
     retries: options.retries,
     timeoutMs: options.timeoutMs,
     reporter: options.reporter,
     attemptExecutor: options.attemptExecutor,
+    attemptExecutorOwnsTimeout: options.attemptExecutorOwnsTimeout,
     testArgumentResolver: options.testArgumentResolver
   })
   return {...result, files}

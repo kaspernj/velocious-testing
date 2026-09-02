@@ -1,0 +1,1 @@
+Add opt-in downstream runner controls for executor-owned timeout cleanup, tag selection, awaited reporters, interruption-safe active-suite cleanup, and structural root suites without changing protocol-1 records or standalone defaults.

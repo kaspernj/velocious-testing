@@ -8,6 +8,12 @@ import {pathToFileURL} from "node:url"
 import {createTestContext} from "../src/index.js"
 import {discoverTestFiles, parseCliArguments, parsePathLine, runNodeTests} from "../src/node/index.js"
 
+function deferred() {
+  let resolve
+  const promise = new Promise((resolvePromise) => { resolve = resolvePromise })
+  return {promise, resolve}
+}
+
 test("path:line parsing accepts POSIX and Windows-style candidates", () => {
   assert.deepEqual(parsePathLine("test/unit.test.js:42"), {path: "test/unit.test.js", line: 42})
   assert.deepEqual(parsePathLine("C:\\repo\\tests\\unit.test.js:17"), {path: "C:/repo/tests/unit.test.js", line: 17})
@@ -76,6 +82,167 @@ test("runNodeTests imports setup and test files, captures locations, filters, an
     assert.equal(isolated.noMatches, true)
     assert.equal(context.registry.suites.length, 0)
   } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("runNodeTests forwards any-match and focused include-tag selection", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-selection-"))
+  try {
+    const testPath = path.join(root, "selection.test.mjs")
+    await writeFile(testPath, "")
+
+    const anyContext = createTestContext()
+    const any = await runNodeTests({
+      context: anyContext,
+      cwd: root,
+      candidates: [testPath],
+      includeTags: ["unit", "api"],
+      includeTagMode: "any",
+      importer: async () => {
+        anyContext.describe("node any tags", () => {
+          anyContext.it("unit", {tags: ["unit"]}, () => {})
+          anyContext.it("api", {tags: ["api"]}, () => {})
+        })
+      }
+    })
+    assert.deepEqual(any.tests.map((entry) => entry.fullName), ["node any tags unit", "node any tags api"])
+
+    const focusContext = createTestContext()
+    const focused = await runNodeTests({
+      context: focusContext,
+      cwd: root,
+      candidates: [testPath],
+      includeTags: ["api"],
+      excludeTags: ["slow"],
+      focusedTestsBypassIncludeTags: true,
+      importer: async () => {
+        focusContext.describe("node focus bypass", () => {
+          focusContext.fit("eligible", {tags: ["other"]}, () => {})
+          focusContext.fit("excluded", {tags: ["other", "slow"]}, () => {})
+        })
+      }
+    })
+    assert.deepEqual(focused.tests.map((entry) => entry.fullName), ["node focus bypass eligible"])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("runNodeTests forwards ignoreFocus to include focused and ordinary tests", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-ignore-focus-"))
+  try {
+    const testPath = path.join(root, "ignore-focus.test.mjs")
+    await writeFile(testPath, "")
+    const context = createTestContext()
+
+    const result = await runNodeTests({
+      context,
+      cwd: root,
+      candidates: [testPath],
+      ignoreFocus: true,
+      importer: async () => {
+        context.describe("node ignore focus", () => {
+          context.fit("focused", () => {})
+          context.it("ordinary", () => {})
+        })
+      }
+    })
+
+    assert.deepEqual(result.tests.map((entry) => entry.fullName), [
+      "node ignore focus focused",
+      "node ignore focus ordinary"
+    ])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("runNodeTests forwards explicit empty suite name omission", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-empty-suite-"))
+  try {
+    const testPath = path.join(root, "empty-suite.test.mjs")
+    await writeFile(testPath, "")
+    const context = createTestContext()
+
+    const result = await runNodeTests({
+      context,
+      cwd: root,
+      candidates: [testPath],
+      omitEmptySuiteNames: true,
+      examples: [/^named works$/u],
+      importer: async () => {
+        context.describe("", () => {
+          context.describe("named", () => {
+            context.it("works", () => {})
+          })
+        })
+      }
+    })
+
+    assert.deepEqual(result.tests.map((entry) => entry.fullName), ["named works"])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("runNodeTests forwards executor-owned timeout without advancing before cleanup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-timeout-"))
+  const cleanupStarted = deferred()
+  const releaseCleanup = deferred()
+  let cleanupFinished = false
+  let secondTestStarted = false
+  let receivedTimeoutMs
+  try {
+    const testPath = path.join(root, "timeout.test.mjs")
+    await writeFile(testPath, "")
+    const context = createTestContext()
+    const runPromise = runNodeTests({
+      context,
+      cwd: root,
+      candidates: [testPath],
+      attemptExecutorOwnsTimeout: true,
+      importer: async () => {
+        context.describe("node timeout ownership", () => {
+          context.it("times out downstream", {timeoutMs: 5}, () => {})
+          context.it("starts after cleanup", () => {})
+        })
+      },
+      attemptExecutor: async (input) => {
+        if (input.test.name === "starts after cleanup") {
+          secondTestStarted = true
+          assert.equal(cleanupFinished, true)
+          return
+        }
+
+        receivedTimeoutMs = input.timeoutMs
+        await new Promise((resolve) => setTimeout(resolve, input.timeoutMs * 2))
+        cleanupStarted.resolve()
+        await releaseCleanup.promise
+        cleanupFinished = true
+        throw new Error("node downstream timeout after cleanup")
+      }
+    })
+
+    await cleanupStarted.promise
+    let orderingError
+    try {
+      assert.equal(secondTestStarted, false)
+    } catch (error) {
+      orderingError = error
+    } finally {
+      releaseCleanup.resolve()
+    }
+    const result = await runPromise
+
+    if (orderingError) throw orderingError
+    assert.equal(receivedTimeoutMs, 5)
+    assert.equal(cleanupFinished, true)
+    assert.equal(secondTestStarted, true)
+    assert.deepEqual(result.counts, {total: 2, passed: 1, failed: 1, skipped: 0})
+    assert.equal(result.tests[0].error.message, "node downstream timeout after cleanup")
+  } finally {
+    releaseCleanup.resolve()
     await rm(root, {recursive: true, force: true})
   }
 })

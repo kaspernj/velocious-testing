@@ -16,12 +16,14 @@ A protocol-major change requires a new symbol, migration notes, dual-version com
 
 The kernel owns selection, traversal, hook inheritance/order, retries, timeouts, console capture, cleanup, and accounting. Small collaborators stay replaceable:
 
-- `attemptExecutor(input)` may wrap one lifecycle attempt and can invoke `input.defaultExecute()`.
+- `attemptExecutor(input)` may wrap one lifecycle attempt and can invoke `input.defaultExecute()`. With `attemptExecutorOwnsTimeout`, it receives `timeoutMs` but the kernel waits for the executor to apply timeout and bounded cleanup before settling.
 - `testArgumentResolver(input)` returns callback arguments.
-- `reporter.onEvent(event)` consumes stable structured events.
+- `reporter.onEvent(event)` consumes stable structured events and may return a promise that the runner awaits before advancing.
 - The Node `importer(filePath)` owns module loading.
 
-The default executor runs ordinary callbacks with outer-to-inner setup and inner-to-outer cleanup. Internal completion/failure discriminators never use the thrown value as a sentinel, so falsy throws and promise rejections remain failures through retries, accounting, and event reporting. Cleanup always exhausts every hook in reverse order. When more than one lifecycle step fails, recursive `errors` records preserve the primary failure followed by every teardown failure; this is an additive protocol-1 result field. The runner is sequential because console interception is process-global.
+The default executor runs ordinary callbacks with outer-to-inner setup and inner-to-outer cleanup. Internal completion/failure discriminators never use the thrown value as a sentinel, so falsy throws and promise rejections remain failures through retries, accounting, and event reporting. Cleanup always exhausts every hook in reverse order. When more than one lifecycle step fails, recursive `errors` records preserve the primary failure followed by every teardown failure; this is an additive protocol-1 result field. `cleanupActiveSuites()` shares idempotent cleanup promises with ordinary suite completion, so interruption cleanup runs active scopes inside-out without later double teardown. The runner is sequential because console interception is process-global.
+
+Selection defaults remain strict and standalone-compatible: include filters require all requested tags and focused tests must still match includes. Downstream adapters can choose any-tag matching and focused include bypass independently; exclusion filters always take precedence. Empty suite names retain their legacy separators unless an adapter sets `omitEmptySuiteNames: true` for unnamed structural suites; that option omits them from full names, example matching, and reported test names. These are runner options and naming behavior only; they do not change the context protocol or declaration, event, and result records.
 
 ## Deferred adapters
 
