@@ -2,13 +2,13 @@
 // @ts-check
 
 import {cliHelp, parseCliArguments, runNodeTests} from "./index.js"
+import {formatTestResultLine} from "./cli-output.js"
 import {defaultTestContext} from "../context.js"
 
 /** @param {any} event */
 function report(event) {
   if (event.type === "test:finish") {
-    const marker = event.test.status === "passed" ? "✓" : "✗"
-    console.log(`${marker} ${event.test.fullName}`)
+    console.log(formatTestResultLine(event.test))
     if (event.test.error) {
       console.error(`  ${event.test.error.message}`)
       const output = event.test.attempts.at(-1)?.consoleOutput?.trimEnd()

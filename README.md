@@ -27,6 +27,16 @@ npx velocious-test tests/unit.test.js tests/api.test.js:42
 npx velocious-test --include-tag unit --exclude-tag slow --example "adds" --setup tests/setup.js
 ```
 
+Each test result line includes its execution time:
+
+```text
+✓ calculator adds (42ms)
+✗ calculator waits (1.234s)
+✗ calculator setup-dependent test (not run)
+```
+
+Durations below one second use integer milliseconds; longer durations use seconds with millisecond precision. Retried tests sum every attempt, while tests blocked by suite setup are reported as not run.
+
 Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` set run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
 
 ## Public API

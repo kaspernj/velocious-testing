@@ -9,6 +9,7 @@ import test from "node:test"
 import {build as bundle} from "esbuild"
 
 const exec = promisify(execFile)
+const TEST_DURATION_PATTERN = String.raw`\((?:\d+ms|\d+\.\d{3}s)\)`
 
 /** @param {Record<string, any>} tree @returns {boolean} */
 function hasVelociousDependency(tree) {
@@ -77,6 +78,8 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
       '})'
     ].join("\n"))
     const cli = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [], {cwd: fixture})
+    assert.match(cli.stdout, new RegExp(`^✓ standalone selected by line ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(cli.stdout, new RegExp(`^✓ standalone not selected by line ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(cli.stdout, /2 passed, 0 failed, 2 total/)
     const locationProbe = await exec("node", ["--input-type=module", "--eval", [
       'import {runNodeTests} from "@velocious/testing/node";',
@@ -88,7 +91,7 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
       {filePath: path.join(fixture, "tests", "smoke.test.js"), line: 4}
     ])
     const byLine = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/smoke.test.js:3"], {cwd: fixture})
-    assert.match(byLine.stdout, /✓ standalone selected by line/)
+    assert.match(byLine.stdout, new RegExp(`^✓ standalone selected by line ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.doesNotMatch(byLine.stdout, /✓ standalone not selected by line/)
     assert.match(byLine.stdout, /1 passed, 0 failed, 1 total/)
     await writeFile(path.join(fixture, "tests", "falsy.test.js"), [
@@ -99,7 +102,35 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     ].join("\n"))
     await assert.rejects(
       exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/falsy.test.js"], {cwd: fixture}),
-      (error) => error.code === 1 && /0 passed, 1 failed, 1 total/.test(error.stdout) && /undefined/.test(error.stderr)
+      (error) => error.code === 1 &&
+        new RegExp(`^✗ standalone falsy failure fails ${TEST_DURATION_PATTERN}$`, "mu").test(error.stdout) &&
+        /0 passed, 1 failed, 1 total/.test(error.stdout) && /undefined/.test(error.stderr)
+    )
+    await writeFile(path.join(fixture, "tests", "retry.test.js"), [
+      'import {describe, it} from "@velocious/testing"',
+      "let attempts = 0",
+      'describe("standalone retry", () => {',
+      '  it("passes after retry", {retries: 1}, () => {',
+      "    attempts += 1",
+      '    if (attempts === 1) throw new Error("retry")',
+      "  })",
+      "})"
+    ].join("\n"))
+    const retried = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/retry.test.js"], {cwd: fixture})
+    assert.match(retried.stdout, new RegExp(`^✓ standalone retry passes after retry ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(retried.stdout, /1 passed, 0 failed, 1 total/)
+    await writeFile(path.join(fixture, "tests", "setup-blocked.test.js"), [
+      'import {beforeAll, describe, it} from "@velocious/testing"',
+      'describe("standalone setup", () => {',
+      '  beforeAll(() => { throw new Error("setup blocked") })',
+      '  it("does not run", () => {})',
+      "})"
+    ].join("\n"))
+    await assert.rejects(
+      exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/setup-blocked.test.js"], {cwd: fixture}),
+      (error) => error.code === 1 &&
+        /^✗ standalone setup does not run \(not run\)$/mu.test(error.stdout) &&
+        /0 passed, 1 failed, 1 total/.test(error.stdout) && /setup blocked/.test(error.stderr)
     )
     await assert.rejects(
       exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["--example", "missing"], {cwd: fixture}),
