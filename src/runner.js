@@ -201,11 +201,6 @@ function withExecutorTimeout(promise, timeoutMs, name, defaultInvoked) {
   })
 }
 
-/** @param {any} suite @returns {boolean} */
-function hasFocus(suite) {
-  return suite.focus || suite.tests.some((/** @type {any} */ entry) => entry.focus) || suite.suites.some(hasFocus)
-}
-
 /** @param {any[]} lineage @param {any} test @param {boolean} [omitEmptySuiteNames] @returns {string} */
 function buildFullName(lineage, test, omitEmptySuiteNames = false) {
   const suiteNames = lineage.map((entry) => entry.name)
@@ -239,6 +234,11 @@ function matchesExpression(expression, value) {
   return new RegExp(expression.source, expression.flags).test(value)
 }
 
+/** @param {any} entry @returns {boolean} */
+function isFocused(entry) {
+  return entry.test.focus || entry.lineage.some((/** @type {any} */ suite) => suite.focus)
+}
+
 export class TestRunner {
   /** @param {TestRunnerOptions} [options] */
   constructor(options = {}) {
@@ -268,13 +268,13 @@ export class TestRunner {
     /** @type {any[]} */
     const all = []
     for (const suite of this.context.registry.suites) flatten(suite, [], all, this.options.omitEmptySuiteNames)
-    const focused = this.context.registry.suites.some((/** @type {any} */ suite) => hasFocus(suite))
+    const focused = all.some((entry) => entry.test.state === "run" && isFocused(entry))
     const include = new Set(normalizeTags(this.options.includeTags))
     const exclude = new Set(normalizeTags(this.options.excludeTags ?? this.context.config.excludeTags))
     const examples = this.options.examples || []
     const selected = all.filter((/** @type {any} */ entry) => {
       const tags = new Set(entry.test.tags)
-      const entryFocused = entry.test.focus || entry.lineage.some((/** @type {any} */ suite) => suite.focus)
+      const entryFocused = isFocused(entry)
       if (focused && !this.options.ignoreFocus && !entryFocused) return false
       if ([...exclude].some((tag) => tags.has(tag))) return false
       if (include.size && !(this.options.focusedTestsBypassIncludeTags && entryFocused)) {

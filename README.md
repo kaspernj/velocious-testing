@@ -36,7 +36,7 @@ describe.only("calculator", () => {
 
 `test` aliases `it`; `fit` aliases `it.only`; `xit` and `xtest` alias `it.skip`; and `fdescribe`/`xdescribe` alias `describe.only`/`describe.skip`. Skipped and todo suites still run their declaration callback to build a stable registry, but neither their test bodies nor their lifecycle hooks execute. `it.todo` accepts no callback.
 
-`it.each(rows)` and `describe.each(rows)` spread array rows into positional callback arguments and pass scalar or object rows as one argument. Names support `%%`, `%#`, `%s`, `%d`, `%j`, and `$path` for object rows. Generated declarations keep the table callsite for path-line selection and diagnostics.
+`it.each(rows)` and `describe.each(rows)` require a non-empty rows array, spread array rows into positional callback arguments, and pass scalar or object rows as one argument. Names support `%%`, `%#`, `%s`, `%d`, `%j`, and `$path` for object rows. Generated declarations keep the table callsite for path-line selection and diagnostics.
 
 Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, and `*-test.*` files under `test`, `tests`, `spec`, or `__tests__`:
 

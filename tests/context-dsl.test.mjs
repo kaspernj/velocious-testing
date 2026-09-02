@@ -168,13 +168,32 @@ test("table declarations fail clearly for invalid rows and templates", () => {
     assert.throws(() => context.it.each([[1]])("missing %s %s", () => {}), /row 0.*%s.*argument/i)
     assert.throws(() => context.it.each([["no"]])("number %d", () => {}), /row 0.*%d.*number/i)
     assert.throws(() => context.it.each([[1]])("unsupported %i", () => {}), /unsupported.*%i/i)
-    assert.throws(() => context.it.each([])("unsupported %i", () => {}), /unsupported.*%i/i)
     assert.throws(() => context.it.each(["scalar"])("path $name", () => {}), /row 0.*\$name.*object/i)
     assert.throws(() => context.it.each([{name: "Ada"}])("path $missing", () => {}), /row 0.*\$missing.*not found/i)
     const circular = {}
     circular.self = circular
     assert.throws(() => context.it.each([[circular]])("json %j", () => {}), /row 0.*%j.*JSON/i)
   })
+})
+
+test("table declarations reject empty rows before template validation or registration", () => {
+  const context = createTestContext()
+
+  context.describe("empty tables", () => {
+    assert.throws(() => context.it.each([]), /it\.each rows must contain at least one row/i)
+    assert.throws(() => context.describe.each([]), /describe\.each rows must contain at least one row/i)
+    assert.throws(
+      () => context.it.each([])("unsupported %i", () => {}),
+      /it\.each rows must contain at least one row/i
+    )
+    assert.throws(
+      () => context.describe.each([])("unsupported %i", () => {}),
+      /describe\.each rows must contain at least one row/i
+    )
+  })
+
+  assert.deepEqual(context.registry.suites[0].tests, [])
+  assert.deepEqual(context.registry.suites[0].suites, [])
 })
 
 test("table duplicate names are deterministic and generated declarations retain one callsite", () => {

@@ -477,6 +477,54 @@ test("runnable focus selects nested only declarations but cannot revive explicit
   assert.equal(result.counts.skipped, 5)
 })
 
+test("focus markers inherited by skipped and todo leaves do not activate global focus", async () => {
+  const context = createTestContext()
+  const calls = []
+
+  context.describe("runnable", () => {
+    context.it("still runs", () => calls.push("runnable"))
+  })
+  context.describe.skip("disabled", () => {
+    context.it.only("focused skipped child", () => calls.push("disabled child"))
+    context.describe.todo("nested todo", () => {
+      context.it.only("focused skip-inherited child", () => calls.push("disabled nested child"))
+    })
+  })
+  context.describe.todo("planned", () => {
+    context.describe.only("focused todo suite", () => {
+      context.it("todo-inherited child", () => calls.push("planned child"))
+      context.describe.skip("nested skip", () => {
+        context.it.only("focused todo-inherited child", () => calls.push("planned nested child"))
+      })
+    })
+  })
+
+  const disabled = context.registry.suites[1]
+  const planned = context.registry.suites[2]
+  assert.equal(disabled.tests[0].focus, true)
+  assert.equal(disabled.tests[0].state, "skip")
+  assert.equal(disabled.suites[0].tests[0].focus, true)
+  assert.equal(disabled.suites[0].tests[0].state, "skip")
+  assert.equal(planned.suites[0].focus, true)
+  assert.equal(planned.suites[0].tests[0].state, "todo")
+  assert.equal(planned.suites[0].suites[0].tests[0].focus, true)
+  assert.equal(planned.suites[0].suites[0].tests[0].state, "todo")
+
+  const result = await runTests({context})
+
+  assert.deepEqual(calls, ["runnable"])
+  assert.deepEqual(result.tests.map((entry) => entry.fullName), ["runnable still runs"])
+  assert.deepEqual(result.nonRunTests.map((entry) => [entry.fullName, entry.status]), [
+    ["disabled focused skipped child", "skipped"],
+    ["disabled nested todo focused skip-inherited child", "skipped"],
+    ["planned focused todo suite todo-inherited child", "todo"],
+    ["planned focused todo suite nested skip focused todo-inherited child", "todo"]
+  ])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 4})
+  assert.equal(result.noMatches, false)
+  assert.equal(result.status, "passed")
+})
+
 test("non-run selection composes with tags and examples without double counting or false noMatches", async () => {
   const context = createTestContext()
   const events = []
