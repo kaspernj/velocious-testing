@@ -15,7 +15,7 @@ The aliases are identities, not wrappers:
 - `fdescribe === describe.only`
 - `xdescribe === describe.skip`
 
-Table declarations use `it.each(rows)(name, options?, callback)` and `describe.each(rows)(name, options?, callback)`. The rows value must be a non-empty array; this is validated before the returned declaration function or its name template is evaluated. Array rows spread; every other row is one argument. `%s`, `%d`, and `%j` consume positional row arguments, `%#` inserts the zero-based row index, `%%` inserts a percent sign, and `$path` reads an object-row property path. Unsupported tokens, missing positional values, invalid numeric/JSON values, non-object `$path` rows, and missing paths throw declaration errors. Duplicate generated names use the ordinary duplicate-declaration error. All rows use the original `each` callsite.
+Table declarations use `it.each(rows)(name, options?, callback)` and `describe.each(rows)(name, options?, callback)`. The rows value must be a non-empty, non-sparse array; this is validated before the returned declaration function or its name template is evaluated. Array rows spread; every other row is one argument. `%s`, `%d`, and `%j` consume positional row arguments, `%#` inserts the zero-based row index, `%%` inserts a percent sign, and `$path` reads an object-row property path. Unsupported tokens, missing positional values, invalid numeric/JSON values, non-object `$path` rows, and missing paths throw declaration errors. Duplicate generated names use the ordinary duplicate-declaration error. All rows use the original `each` callsite.
 
 ## Result and event additions
 

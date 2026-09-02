@@ -72,6 +72,9 @@ function rowArguments(row) { return Array.isArray(row) ? row : [row] }
 function validateRows(kind, rows) {
   if (!Array.isArray(rows)) throw new Error(`${kind}.each rows must be an array`)
   if (rows.length === 0) throw new Error(`${kind}.each rows must contain at least one row`)
+  for (let index = 0; index < rows.length; index += 1) {
+    if (!Object.hasOwn(rows, index)) throw new Error(`${kind}.each rows must not be sparse: missing row at index ${index}`)
+  }
 }
 
 /** @param {string} template */

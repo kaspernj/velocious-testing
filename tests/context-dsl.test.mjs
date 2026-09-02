@@ -219,6 +219,31 @@ test("table declarations reject empty rows before template validation or registr
   assert.deepEqual(context.registry.suites[0].suites, [])
 })
 
+for (const [kind, shape, missingIndex] of [
+  ["it", "fully", 0],
+  ["it", "partially", 1],
+  ["describe", "fully", 0],
+  ["describe", "partially", 1]
+]) {
+  test(`${kind}.each rejects ${shape} sparse rows before registration`, () => {
+    const rows = shape === "fully" ? new Array(3) : ["first", "missing", "third"]
+    if (shape === "partially") delete rows[1]
+    const context = createTestContext()
+    const expected = new RegExp(`${kind}\\.each rows must not be sparse: missing row at index ${missingIndex}`, "i")
+
+    if (kind === "it") {
+      context.describe("sparse table", () => {
+        assert.throws(() => context.it.each(rows)("case %# %s", () => {}), expected)
+      })
+      assert.deepEqual(context.registry.suites[0].tests, [])
+      assert.deepEqual(context.registry.suites[0].suites, [])
+    } else {
+      assert.throws(() => context.describe.each(rows)("suite %# %s", () => {}), expected)
+      assert.deepEqual(context.registry.suites, [])
+    }
+  })
+}
+
 test("table duplicate names are deterministic and generated declarations retain one callsite", () => {
   let line = 90
   const context = createTestContext({declarationLocator: () => ({filePath: "/project/tests/table.test.js", line: line++})})
