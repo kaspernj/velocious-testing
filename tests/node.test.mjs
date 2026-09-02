@@ -86,6 +86,66 @@ test("runNodeTests imports setup and test files, captures locations, filters, an
   }
 })
 
+test("runNodeTests attributes generated table declarations to each callsites", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-each-location-"))
+  const packageEntry = pathToFileURL(path.resolve("src/index.js")).href
+  try {
+    const testPath = path.join(root, "table.test.mjs")
+    await writeFile(testPath, [
+      `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+      'describe("locations", () => {',
+      '  it.each([["first"], ["second"]])("test %# %s", () => {})',
+      '  describe.each([["first"], ["second"]])("suite %# %s", () => it("child", () => {}))',
+      '})'
+    ].join("\n"))
+
+    const result = await runNodeTests({cwd: root, candidates: [testPath]})
+
+    assert.deepEqual(result.tests.map((entry) => entry.location), [
+      {filePath: testPath, line: 3},
+      {filePath: testPath, line: 3},
+      {filePath: testPath, line: 4},
+      {filePath: testPath, line: 4}
+    ])
+    const bySuiteCallsite = await runNodeTests({cwd: root, candidates: [`${testPath}:4`]})
+    assert.deepEqual(bySuiteCallsite.tests.map((entry) => entry.fullName), [
+      "locations suite 0 first child",
+      "locations suite 1 second child"
+    ])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("generated each declarations retain their user callsite and default runs reset declaration state", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-each-"))
+  const packageEntry = pathToFileURL(path.resolve("src/index.js")).href
+  try {
+    const testPath = path.join(root, "each.test.mjs")
+    await writeFile(testPath, [
+      `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+      'describe("locations", () => {',
+      '  it.each([["first"], ["second"]])("case %s", () => {})',
+      '  it.skip("later", () => { throw new Error("must not run") })',
+      "})"
+    ].join("\n"))
+
+    const first = await runNodeTests({cwd: root, candidates: [testPath]})
+    const second = await runNodeTests({cwd: root, candidates: [testPath]})
+
+    for (const result of [first, second]) {
+      assert.deepEqual(result.tests.map((entry) => entry.location), [
+        {filePath: testPath, line: 3},
+        {filePath: testPath, line: 3}
+      ])
+      assert.deepEqual(result.nonRunTests.map((entry) => entry.location), [{filePath: testPath, line: 4}])
+      assert.deepEqual(result.counts, {total: 2, passed: 2, failed: 0, skipped: 1})
+    }
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test("runNodeTests forwards any-match and focused include-tag selection", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-selection-"))
   try {

@@ -8,7 +8,9 @@ Published build and declaration maps resolve to the shipped `src/` files. Those 
 
 ## Context identity and protocol
 
-Registration state is explicit: each `TestContext` owns a registry, configuration, event emitter, declaration stack, and bound DSL. `createTestContext()` always isolates those values. The default uses the realm-wide versioned symbol `@velocious/testing.default-context.v1`; copies with protocol major 1/schema 1 reuse it, while incompatible values throw at import time. Result and structured event records include numeric protocol major 1.
+Registration state is explicit: each `TestContext` owns a registry, configuration, event emitter, declaration stack, and bound DSL. `createTestContext()` always isolates those values. The default uses the realm-wide versioned symbol `@velocious/testing.default-context.v1`; copies with protocol major 1/schema 2 reuse it, while incompatible values throw at import time before a declaration can be registered. Result and structured event records include numeric protocol major 1.
+
+Schema 2 adds `run`/`skip`/`todo` declaration state, inherited from suites, and row arguments for generated table tests. Skipped and todo suite callbacks execute during declaration so registry shape and source ownership remain stable; execution traversal admits only `run` leaves. The table helper captures its source location once and assigns it to every generated declaration, leaving Node stack inspection in the Node-only layer.
 
 A protocol-major change requires a new symbol, migration notes, dual-version compatibility guidance, and explicit rollback instructions. Additive schema changes should retain old readers. A rollback must restore the prior entry formats without leaving a context that a compatible physical copy can misinterpret.
 
@@ -22,6 +24,8 @@ The kernel owns selection, traversal, hook inheritance/order, retries, timeouts,
 - The Node `importer(filePath)` owns module loading.
 
 The default executor runs ordinary callbacks with outer-to-inner setup and inner-to-outer cleanup. Internal completion/failure discriminators never use the thrown value as a sentinel, so falsy throws and promise rejections remain failures through retries, accounting, and event reporting. Cleanup always exhausts every hook in reverse order. When more than one lifecycle step fails, recursive `errors` records preserve the primary failure followed by every teardown failure; this is an additive protocol-1 result field. `cleanupActiveSuites()` shares idempotent cleanup promises with ordinary suite completion, so interruption cleanup runs active scopes inside-out without later double teardown. The runner is sequential because console interception is process-global.
+
+Selection applies focus, tags, examples, and source lines to all leaves before declaration state divides the selection. Runnable leaves retain the existing `tests`, `test:start`, and `test:finish` shapes. Matched explicit non-runs are additive `nonRunTests` records and `test:skip` events. `counts.total` still equals runnable selected tests and therefore `passed + failed`; `counts.skipped` is all declared leaves minus runnable selected leaves, so filtered and explicit non-runs are counted once. `noMatches` examines the pre-state selection, allowing matched-only-todo runs to succeed without executing hooks.
 
 The Node CLI appends compact execution time to each test result line by summing the existing attempt `durationMs` values. Tests blocked by suite setup have no attempts and are reported as not run. This is presentation derived from protocol-1 records; it does not add result or event fields.
 

@@ -19,6 +19,25 @@ describe("calculator", {tags: ["unit"]}, () => {
 })
 ```
 
+Declaration modifiers and table tests are available on the same bound DSL:
+
+```js
+import {describe, expect, it, test} from "@velocious/testing"
+
+describe.only("calculator", () => {
+  test("has an alias", () => {})
+  it.skip("documents a disabled case")
+  it.todo("documents unfinished behavior")
+  it.each([[1, 2, 3], [2, 3, 5]])("adds row %#: %d + %d = %d", (left, right, sum) => {
+    expect(left + right).toEqual(sum)
+  })
+})
+```
+
+`test` aliases `it`; `fit` aliases `it.only`; `xit` and `xtest` alias `it.skip`; and `fdescribe`/`xdescribe` alias `describe.only`/`describe.skip`. Skipped and todo suites still run their declaration callback to build a stable registry, but neither their test bodies nor their lifecycle hooks execute. `it.todo` accepts no callback.
+
+`it.each(rows)` and `describe.each(rows)` spread array rows into positional callback arguments and pass scalar or object rows as one argument. Names support `%%`, `%#`, `%s`, `%d`, `%j`, and `$path` for object rows. Generated declarations keep the table callsite for path-line selection and diagnostics.
+
 Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, and `*-test.*` files under `test`, `tests`, `spec`, or `__tests__`:
 
 ```sh
@@ -41,9 +60,11 @@ Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout M
 
 ## Public API
 
-The browser/Metro-safe root exports `describe`, `it`, `fit`, all four lifecycle hooks, `expect`, `arrayContaining`, `objectContaining`, `waitForEvent`, `configureTests`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
+The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, `test`, `fit`, `xit`, `xtest`, all four lifecycle hooks, `expect`, `arrayContaining`, `objectContaining`, `waitForEvent`, `configureTests`, `CONTEXT_SCHEMA_VERSION`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
 
 `@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
+
+Run results keep executed and setup-blocked records in `tests` and add explicit declared non-runs in `nonRunTests` with `skipped` or `todo` status. Each matched explicit non-run emits `test:skip`. `counts.total` remains the number of runnable selected tests, while `counts.skipped` includes filtered declarations and declared non-runs exactly once. A selection matching only explicit skips or todos has `noMatches: false` and succeeds when no other error occurs.
 
 Include tags require every requested tag by default; `includeTagMode: "any"` selects a test with at least one requested tag. `focusedTestsBypassIncludeTags: true` keeps focused tests eligible when includes do not match, while exclusions still win. A custom executor may set `attemptExecutorOwnsTimeout: true` to receive the declared `timeoutMs` without the kernel abandoning it at that deadline; that executor must apply its own timeout and settle only after its bounded cleanup. `TestRunner#cleanupActiveSuites()` idempotently runs active `afterAll` hooks once in reverse scope order for interruption handling. Empty suite names retain their legacy separators by default; adapters that use unnamed structural suites can set `omitEmptySuiteNames: true` to omit them consistently from full names, example matching, and reporting.
 
@@ -60,7 +81,7 @@ const result = await runTests({context})
 
 ## Compatibility and plugins
 
-Compatible physical copies share the default context through `Symbol.for("@velocious/testing.default-context.v1")`. The context, event, and result protocol has numeric major `1` and schema `1`; an incompatible copy throws instead of silently splitting registration trees. Isolated contexts never share registry, config, or events.
+Compatible physical copies share the default context through `Symbol.for("@velocious/testing.default-context.v1")`. The context, event, and result protocol has numeric major `1` and schema `2`; an incompatible copy throws instead of silently splitting registration trees. Schema 2 adds declaration state and table arguments to the registry plus additive non-run results/events. Schema-1 and schema-2 physical copies cannot coexist in one realm; upgrade every copy together before importing tests. Isolated contexts never share registry, config, or events. See [Declaration states and schema-2 migration](docs/declaration-state.md).
 
 Plugins that expose testing helpers should declare `@velocious/testing` as a peer dependency and import its public entries. They should not bundle a private physical copy or depend on the full Velocious framework for generic test behavior. Framework-specific adapters remain downstream.
 
