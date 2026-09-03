@@ -30,7 +30,10 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
       const result = await bundle({entryPoints: [entry], bundle: true, format: "esm", platform: "browser", write: false, metafile: true})
       assert.ok(result.outputFiles[0].text.length > 0)
       const inputPaths = Object.keys(result.metafile.inputs)
-      if (entry === "src/index.js") assert.ok(inputPaths.includes("src/mocks.js"))
+      if (entry === "src/index.js") {
+        assert.ok(inputPaths.includes("src/equality.js"))
+        assert.ok(inputPaths.includes("src/mocks.js"))
+      }
       assert.equal(inputPaths.some((input) => input.startsWith("node:")), false)
       assert.doesNotMatch(result.outputFiles[0].text, /\bimport\.meta\b/u)
       for (const inputPath of inputPaths) {
@@ -56,13 +59,27 @@ test("generated mock declarations accept string and symbol keys but reject numer
   ], {cwd: process.cwd()})
 })
 
+test("generated matcher declarations expose promise, asymmetric, and extensible custom contracts", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/matchers.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("packed tarball has explicit exports, resolvable maps, declarations, executable CLI, and works standalone", async () => {
   const artifactDirectory = path.resolve("tmp/package")
   const cacheDirectory = path.resolve("tmp/npm-cache")
   await mkdir(artifactDirectory, {recursive: true})
   const dry = JSON.parse((await exec("npm", ["pack", "--dry-run", "--json", "--cache", cacheDirectory], {cwd: process.cwd()})).stdout)[0]
   const names = dry.files.map((file) => file.path)
-  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/test-doubles.md", "README.md", "LICENSE"]) {
+  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/matchers.md", "docs/test-doubles.md", "README.md", "LICENSE"]) {
     assert.ok(names.includes(required), `missing ${required}`)
   }
   assert.ok(names.includes("src/index.js"))
@@ -86,8 +103,18 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     await exec("npm", ["install", "--ignore-scripts", "--cache", cacheDirectory, tarball], {cwd: fixture})
     const installedPackage = path.join(fixture, "node_modules", "@velocious", "testing")
     const rootDeclarations = await readFile(path.join(installedPackage, "build", "index.d.ts"), "utf8")
+    const matcherDeclarations = await readFile(path.join(installedPackage, "build", "matchers.d.ts"), "utf8")
     const mockDeclarations = await readFile(path.join(installedPackage, "build", "mocks.d.ts"), "utf8")
     assert.match(rootDeclarations, /createMockScope, mock.*\.\/mocks\.js/u)
+    for (const publicName of ["any", "anything", "Expect", "PromiseExpectation", "stringContaining", "stringMatching"]) {
+      assert.match(rootDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
+    }
+    for (const publicType of ["AsymmetricMatcher", "CustomMatcher", "CustomMatcherContext", "CustomMatcherDefinitions", "CustomMatcherResult"]) {
+      assert.match(rootDeclarations, new RegExp(`export type ${publicType}\\b`, "u"))
+    }
+    assert.match(matcherDeclarations, /function extend\(definitions: CustomMatcherDefinitions\): void/u)
+    assert.match(matcherDeclarations, /get resolves\(\): PromiseExpectation/u)
+    assert.match(matcherDeclarations, /get rejects\(\): PromiseExpectation/u)
     for (const publicName of ["fn", "spyOn", "stub", "clearAll", "resetAll", "restoreAll"]) {
       assert.match(mockDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
     }
@@ -245,6 +272,37 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     assert.match(stageTwo.stdout, new RegExp(`^✓ stage2 doubles records calls for matchers ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(stageTwo.stdout, new RegExp(`^✓ stage2 doubles restores exact properties ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(stageTwo.stdout, /2 passed, 0 failed, 2 total/)
+    await writeFile(path.join(fixture, "tests", "stage3.test.js"), [
+      'import {any, createMockScope, describe, expect, it, objectContaining, stringMatching} from "@velocious/testing"',
+      'expect.extend({',
+      '  toHaveId(received, id) {',
+      '    return {pass: this.equals(received, objectContaining({id})), message: `Expected ${this.format(received)} to have id ${id}`}',
+      '  }',
+      '})',
+      'describe("stage3 matchers", () => {',
+      '  it("awaits promise chains", () => expect(Promise.resolve({id: 7})).resolves.toHaveId(7))',
+      '  it("composes asymmetric mock arguments", async () => {',
+      '    const send = createMockScope().fn()',
+      '    send({id: 7, name: "Ada"})',
+      '    expect(send).toHaveBeenCalledWith(objectContaining({id: any(Number), name: stringMatching(/^Ada$/u)}))',
+      '    await expect(Promise.reject(new TypeError("failure"))).rejects.toThrow(TypeError)',
+      '  })',
+      '})'
+    ].join("\n"))
+    const stageThree = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/stage3.test.js"], {cwd: fixture})
+    assert.match(stageThree.stdout, new RegExp(`^✓ stage3 matchers awaits promise chains ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(stageThree.stdout, new RegExp(`^✓ stage3 matchers composes asymmetric mock arguments ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(stageThree.stdout, /2 passed, 0 failed, 2 total/)
+    const diffProbe = await exec("node", ["--input-type=module", "--eval", [
+      'import {expect} from "@velocious/testing";',
+      'try { expect({z: 2, a: 1}).toEqual({a: 2}) } catch (error) { console.log(JSON.stringify(error.message)) }'
+    ].join("\n")], {cwd: fixture})
+    assert.equal(JSON.parse(diffProbe.stdout), [
+      '{"z":2,"a":1} wasn\'t equal to {"a":2}',
+      "Diff:",
+      "  $.a: expected 2, received 1",
+      "  $.z: expected <missing>, received 2"
+    ].join("\n"))
     await assert.rejects(
       exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["--example", "missing"], {cwd: fixture}),
       (error) => error.code === 1 && /No tests matched/.test(error.stderr)

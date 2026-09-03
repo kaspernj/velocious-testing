@@ -1,0 +1,1 @@
+Add browser-safe promise assertions, composable asymmetric and custom matchers, deterministic bounded structural differences, generated declarations, and standalone package coverage without changing context or runner protocols.

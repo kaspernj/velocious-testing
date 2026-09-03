@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {createTestContext} from "../src/index.js"
+import {createTestContext, objectContaining} from "../src/index.js"
 import {PROTOCOL_MAJOR, TestRunner, runTests} from "../src/runner.js"
 
 function deferred() {
@@ -42,6 +42,28 @@ test("runner executes inherited hooks in order and reports pass/fail", async () 
     "inner afterAll",
     "afterAll"
   ])
+})
+
+test("runner awaits promise assertion chains returned by test callbacks", async () => {
+  const context = createTestContext()
+  let attempts = 0
+
+  context.describe("promise assertions", () => {
+    context.it("passes", () => context.expect(Promise.resolve({id: 1})).resolves.toEqual(
+      objectContaining({id: 1})
+    ))
+    context.it("retries returned failures", {retries: 1}, () => {
+      attempts += 1
+      return context.expect(Promise.resolve(attempts)).resolves.toBe(2)
+    })
+    context.it("reports returned failures", () => context.expect(Promise.resolve({id: 1})).resolves.toEqual({id: 2}))
+  })
+
+  const result = await runTests({context})
+
+  assert.deepEqual(result.counts, {total: 3, passed: 2, failed: 1, skipped: 0})
+  assert.equal(result.tests[1].attempts.length, 2)
+  assert.match(result.tests[2].error.message, /\$\.id: expected 2, received 1/u)
 })
 
 test("cleanup runs after hook and setup failures", async () => {

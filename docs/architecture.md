@@ -2,7 +2,9 @@
 
 ## Dependency direction
 
-`src/index.js`, context, events, and matchers form the browser-safe DSL. `src/runner.js` depends only on that core. `src/node/` depends inward on both and owns filesystem, URL, process, CLI, stack/source-location, and dynamic-import behavior. Nothing points to the full Velocious framework. Consumers may adapt the generic contracts downstream; this package never reaches outward to discover framework behavior.
+`src/index.js`, context, events, matchers, and the internal equality/diff engine form the browser-safe DSL. `src/runner.js` depends only on that core. `src/node/` depends inward on both and owns filesystem, URL, process, CLI, stack/source-location, and dynamic-import behavior. Nothing points to the full Velocious framework. Consumers may adapt the generic contracts downstream; this package never reaches outward to discover framework behavior.
+
+`src/equality.js` owns runtime-neutral deep comparison, asymmetric-value dispatch, stable value formatting, and bounded structural differences. `src/matchers.js` owns assertions, promise settlement dispatch, and the module-local custom matcher registry. Promise assertions return ordinary promises, so the existing runner lifecycle awaits them without matcher-specific runner coupling. Custom matcher registration does not attach to `TestContext` and therefore does not alter its shared protocol/schema state.
 
 `src/mocks.js` is another browser-safe core leaf. A mock scope owns only function state, a monotonic invocation counter, and explicit property-restoration registrations; a module-local weak registry prevents ambiguous property-double stacking across scopes. It does not attach to `TestContext`, alter the context protocol/schema, or participate in runner attempts and retries. This keeps isolated cleanup available through ordinary hooks without adding implicit runner coupling or cross-copy compatibility state.
 
