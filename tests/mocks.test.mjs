@@ -95,6 +95,70 @@ test("constructor calls record successful instances and constructor throws", () 
   assert.deepEqual(Throwing.mock.instances, [])
 })
 
+test("bound constructor implementations preserve native construction semantics", () => {
+  const scope = testing.createMockScope()
+  function Person(firstName, lastName) {
+    this.name = `${firstName} ${lastName}`
+    this.constructorNewTarget = new.target
+  }
+  Person.prototype.greeting = function () { return `Hello ${this.name}` }
+  const BoundPerson = Person.bind(null, "Ada")
+
+  assert.equal(BoundPerson.prototype, undefined)
+  const baseline = new BoundPerson("Lovelace")
+  assert.equal(Object.getPrototypeOf(baseline), Person.prototype)
+  assert.equal(baseline instanceof Person, true)
+  assert.equal(baseline.constructorNewTarget, Person)
+  assert.equal(baseline.greeting(), "Hello Ada Lovelace")
+
+  const PersonDouble = scope.fn(BoundPerson)
+  const person = new PersonDouble("Lovelace")
+
+  assert.equal(Object.getPrototypeOf(person), Person.prototype)
+  assert.equal(person instanceof Person, true)
+  assert.equal(person instanceof BoundPerson, true)
+  assert.equal(person instanceof PersonDouble, true)
+  assert.equal(person.constructorNewTarget, Person)
+  assert.equal(person.greeting(), "Hello Ada Lovelace")
+  assert.deepEqual(PersonDouble.mock.calls, [["Lovelace"]])
+  assert.deepEqual(PersonDouble.mock.results, [{type: "return", value: person}])
+  assert.deepEqual(PersonDouble.mock.instances, [person])
+
+  class AlternatePerson {}
+  PersonDouble.mockImplementation(AlternatePerson)
+  const alternate = new PersonDouble()
+  assert.equal(alternate instanceof AlternatePerson, true)
+  assert.equal(person instanceof PersonDouble, true)
+
+  PersonDouble.mockReset()
+  assert.equal(person instanceof PersonDouble, true)
+  assert.equal(alternate instanceof PersonDouble, true)
+})
+
+test("constructor implementations preserve explicit derived new targets", () => {
+  const scope = testing.createMockScope()
+  let constructorNewTarget
+  class Person {
+    constructor(name) {
+      this.name = name
+      constructorNewTarget = new.target
+    }
+  }
+  const PersonDouble = scope.fn(Person)
+  class DerivedPerson extends PersonDouble {}
+
+  const person = new DerivedPerson("Ada")
+
+  assert.equal(constructorNewTarget, DerivedPerson)
+  assert.equal(Object.getPrototypeOf(person), DerivedPerson.prototype)
+  assert.equal(person instanceof DerivedPerson, true)
+  assert.equal(person instanceof Person, true)
+  assert.equal(person instanceof PersonDouble, true)
+  assert.deepEqual(PersonDouble.mock.calls, [["Ada"]])
+  assert.deepEqual(PersonDouble.mock.results, [{type: "return", value: person}])
+  assert.deepEqual(PersonDouble.mock.instances, [person])
+})
+
 test("constructor implementations consistently use the selected class prototype and reset to neutral", () => {
   const scope = testing.createMockScope()
   class Initial {

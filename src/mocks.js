@@ -117,7 +117,8 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
           mockFunction.prototype = constructor.prototype && typeof constructor.prototype === "object" ?
             constructor.prototype : neutralPrototype
         }
-        value = Reflect.construct(constructor, args, new.target)
+        const constructorNewTarget = Object.is(new.target, mockFunction) && selected ? constructor : new.target
+        value = Reflect.construct(constructor, args, constructorNewTarget)
         constructedInstances.add(value)
         state.instances.push(value)
       } else {
