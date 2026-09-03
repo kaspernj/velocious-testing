@@ -38,6 +38,25 @@ describe.only("calculator", () => {
 
 `it.each(rows)` and `describe.each(rows)` require a non-empty, non-sparse rows array, spread array rows into positional callback arguments, and pass scalar or object rows as one argument. Names support `%%`, `%#`, `%s`, `%d`, `%j`, and `$path` for object rows. Generated declarations keep the table callsite for path-line selection and diagnostics.
 
+Browser-safe test doubles use the default `mock` registry or an isolated scope:
+
+```js
+import {createMockScope, expect} from "@velocious/testing"
+
+const mocks = createMockScope()
+const send = mocks.fn().mockResolvedValueOnce({status: 202})
+const service = {load(id) { return {id} }}
+const load = mocks.spyOn(service, "load")
+
+await send("queued")
+service.load(7)
+expect(send).toHaveBeenCalledWith("queued")
+expect(load).toHaveBeenCalledTimes(1)
+mocks.restoreAll()
+```
+
+Mocks record calls, return/throw results, successful constructor instances, and scope-global invocation order. Persistent behavior and FIFO one-shot implementation/return/resolve/reject helpers are chainable. `mockClear()` removes history, `mockReset()` also removes behavior, and property-double `mockRestore()` reinstates exact captured ownership and descriptors. Scope-level `clearAll()`, `resetAll()`, and reverse-order `restoreAll()` are explicit; the runner does not perform magical cleanup. See [Browser-safe test doubles](docs/test-doubles.md) for descriptor rules and lifecycle details.
+
 Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, and `*-test.*` files under `test`, `tests`, `spec`, or `__tests__`:
 
 ```sh
@@ -60,7 +79,7 @@ Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout M
 
 ## Public API
 
-The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, `test`, `fit`, `xit`, `xtest`, all four lifecycle hooks, `expect`, `arrayContaining`, `objectContaining`, `waitForEvent`, `configureTests`, `CONTEXT_SCHEMA_VERSION`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
+The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, `test`, `fit`, `xit`, `xtest`, all four lifecycle hooks, `expect`, `arrayContaining`, `objectContaining`, `waitForEvent`, `mock`, `createMockScope()`, `configureTests`, `CONTEXT_SCHEMA_VERSION`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, the five mock call matchers, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
 
 `@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
 

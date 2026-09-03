@@ -1,5 +1,7 @@
 // @ts-check
 
+import {isMockFunction} from "./mocks.js"
+
 /** @typedef {{__velociousMatcher: "arrayContaining" | "objectContaining", value: any}} ContainingMatcher */
 
 /** @param {any} value @returns {ContainingMatcher} */
@@ -166,6 +168,15 @@ function quotedValue(value) {
   return typeof value === "string" ? minifiedStringify(value) : formatValue(value)
 }
 
+/** @param {any} value @returns {any[][]} */
+function mockCalls(value) {
+  if (!isMockFunction(value)) throw new TypeError("Expected a mock function")
+  return value.mock.calls
+}
+
+/** @param {number} count @returns {string} */
+function callCount(count) { return `${count} ${count === 1 ? "time" : "times"}` }
+
 /** @param {RegExp} expression @param {string} value @returns {boolean} */
 function matchesExpression(expression, value) {
   return new RegExp(expression.source, expression.flags).test(value)
@@ -294,6 +305,64 @@ export class Expect {
     const differences = equal ? {} : matchDifferences(this.value, expected)
     const suffix = Object.keys(differences).length ? ` (diff: ${minifiedStringify(differences)})` : ""
     this.assert(equal, `Expected ${formatValue(this.value)} to match ${formatValue(expected)}${suffix}`, `Expected ${formatValue(this.value)} not to match ${formatValue(expected)}`)
+  }
+
+  toHaveBeenCalled() {
+    const calls = mockCalls(this.value)
+    this.assert(
+      calls.length > 0,
+      `Expected mock to have been called, but it was called ${callCount(calls.length)}`,
+      `Expected mock not to have been called, but actual calls were ${minifiedStringify(calls)}`
+    )
+  }
+
+  /** @param {number} expected */
+  toHaveBeenCalledTimes(expected) {
+    if (!Number.isInteger(expected) || expected < 0) throw new TypeError("Expected call count to be a non-negative integer")
+    const calls = mockCalls(this.value)
+    this.assert(
+      calls.length === expected,
+      `Expected mock to have been called ${callCount(expected)}, but it was called ${callCount(calls.length)}`,
+      `Expected mock not to have been called ${callCount(expected)}, but it was`
+    )
+  }
+
+  /** @param {...any} expected */
+  toHaveBeenCalledWith(...expected) {
+    const calls = mockCalls(this.value)
+    const matchingIndex = calls.findIndex((call) => matches(call, expected))
+    this.assert(
+      matchingIndex >= 0,
+      `Expected mock to have been called with ${minifiedStringify(expected)}, but actual calls were ${minifiedStringify(calls)}`,
+      `Expected mock not to have been called with ${minifiedStringify(expected)}, but matching call ${matchingIndex + 1} was found`
+    )
+  }
+
+  /** @param {...any} expected */
+  toHaveBeenLastCalledWith(...expected) {
+    const calls = mockCalls(this.value)
+    const actual = calls.at(-1)
+    this.assert(
+      actual !== undefined && matches(actual, expected),
+      actual === undefined ?
+        `Expected last mock call to equal ${minifiedStringify(expected)}, but no calls were recorded` :
+        `Expected last mock call to equal ${minifiedStringify(expected)}, but it was ${minifiedStringify(actual)}`,
+      `Expected last mock call not to equal ${minifiedStringify(expected)}, but it did`
+    )
+  }
+
+  /** @param {number} index @param {...any} expected */
+  toHaveBeenNthCalledWith(index, ...expected) {
+    if (!Number.isInteger(index) || index <= 0) throw new TypeError("Expected call index to be a positive integer")
+    const calls = mockCalls(this.value)
+    const actual = calls[index - 1]
+    this.assert(
+      actual !== undefined && matches(actual, expected),
+      actual === undefined ?
+        `Expected mock call ${index} to equal ${minifiedStringify(expected)}, but only ${calls.length} ${calls.length === 1 ? "call was" : "calls were"} recorded` :
+        `Expected mock call ${index} to equal ${minifiedStringify(expected)}, but it was ${minifiedStringify(actual)}`,
+      `Expected mock call ${index} not to equal ${minifiedStringify(expected)}, but it did`
+    )
   }
 
   /** @param {string | RegExp | Error | Function} [expected] @returns {Promise<void>} */

@@ -4,6 +4,7 @@ import {defaultTestContext} from "./context.js"
 
 export {CONTEXT_SCHEMA_VERSION, createTestContext, defaultTestContext, installGlobals} from "./context.js"
 export {arrayContaining, expect, objectContaining, waitForEvent} from "./matchers.js"
+export {createMockScope, mock} from "./mocks.js"
 
 export const describe = defaultTestContext.describe
 export const fdescribe = defaultTestContext.fdescribe

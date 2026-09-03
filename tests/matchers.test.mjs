@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import {EventEmitter} from "node:events"
 import test from "node:test"
 
-import {arrayContaining, expect, objectContaining, waitForEvent} from "../src/index.js"
+import {arrayContaining, createMockScope, expect, objectContaining, waitForEvent} from "../src/index.js"
 
 test("equality and representative failure messages are Velocious-compatible", () => {
   expect({id: 1, nested: ["a"]}).toEqual({id: 1, nested: ["a"]})
@@ -106,4 +106,71 @@ test("waitForEvent filters, unwraps arguments, cleans listeners, and times out",
   assert.equal(emitter.listenerCount("ready"), 0)
   await assert.rejects(waitForEvent(emitter, "never", {timeoutMs: 5}), /Timed out after 5ms waiting for event "never"/)
   assert.equal(emitter.listenerCount("never"), 0)
+})
+
+test("call matchers inspect counts and arguments with existing deep and containing equality", () => {
+  const scope = createMockScope()
+  const implementation = scope.fn()
+
+  expect(implementation).not.toHaveBeenCalled()
+  expect(implementation).toHaveBeenCalledTimes(0)
+  implementation({id: 1, name: "Ada"}, ["first", "second"])
+  implementation({id: 2}, ["last"])
+
+  expect(implementation).toHaveBeenCalled()
+  expect(implementation).not.toHaveBeenCalledTimes(1)
+  expect(implementation).toHaveBeenCalledTimes(2)
+  expect(implementation).toHaveBeenCalledWith(
+    objectContaining({id: 1}),
+    arrayContaining(["second"])
+  )
+  expect(implementation).not.toHaveBeenCalledWith({id: 3})
+  expect(implementation).toHaveBeenLastCalledWith({id: 2}, ["last"])
+  expect(implementation).not.toHaveBeenLastCalledWith({id: 1}, ["first", "second"])
+  expect(implementation).toHaveBeenNthCalledWith(1, {id: 1, name: "Ada"}, ["first", "second"])
+  expect(implementation).not.toHaveBeenNthCalledWith(2, {id: 1})
+})
+
+test("call matchers provide useful positive and negated diagnostics", () => {
+  const scope = createMockScope()
+  const implementation = scope.fn()
+
+  assert.throws(() => expect(implementation).toHaveBeenCalled(), {
+    message: "Expected mock to have been called, but it was called 0 times"
+  })
+  implementation("actual", {id: 1})
+  assert.throws(() => expect(implementation).not.toHaveBeenCalled(), {
+    message: "Expected mock not to have been called, but actual calls were [[\"actual\",{\"id\":1}]]"
+  })
+  assert.throws(() => expect(implementation).toHaveBeenCalledTimes(2), {
+    message: "Expected mock to have been called 2 times, but it was called 1 time"
+  })
+  assert.throws(() => expect(implementation).toHaveBeenCalledWith("wanted"), {
+    message: "Expected mock to have been called with [\"wanted\"], but actual calls were [[\"actual\",{\"id\":1}]]"
+  })
+  assert.throws(() => expect(implementation).toHaveBeenLastCalledWith("wanted"), {
+    message: "Expected last mock call to equal [\"wanted\"], but it was [\"actual\",{\"id\":1}]"
+  })
+  assert.throws(() => expect(implementation).toHaveBeenNthCalledWith(2, "wanted"), {
+    message: "Expected mock call 2 to equal [\"wanted\"], but only 1 call was recorded"
+  })
+})
+
+test("call matchers validate the received mock, call count, and one-based call index", () => {
+  const implementation = createMockScope().fn()
+
+  for (const assertion of [
+    () => expect(() => {}).toHaveBeenCalled(),
+    () => expect(() => {}).toHaveBeenCalledTimes(1),
+    () => expect(() => {}).toHaveBeenCalledWith(),
+    () => expect(() => {}).toHaveBeenLastCalledWith(),
+    () => expect(() => {}).toHaveBeenNthCalledWith(1)
+  ]) assert.throws(assertion, /Expected a mock function/)
+
+  for (const count of [-1, 1.5, Number.NaN]) {
+    assert.throws(() => expect(implementation).toHaveBeenCalledTimes(count), /non-negative integer/)
+  }
+  for (const index of [0, -1, 1.5, Number.NaN]) {
+    assert.throws(() => expect(implementation).toHaveBeenNthCalledWith(index), /positive integer/)
+  }
 })
