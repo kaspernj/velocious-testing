@@ -102,10 +102,14 @@ function matchesAsymmetric(actual, expected, pairs) {
       return matchesExpression(expression, actual)
     }
     case "objectContaining":
-      return Boolean(actual && typeof actual === "object" && Object.keys(expected.value).every((key) =>
-        Object.prototype.hasOwnProperty.call(actual, key) && matchesInternal(actual[key], expected.value[key], pairs)))
+      if (!actual || typeof actual !== "object") return false
+      if (markPair(pairs, actual, expected)) return true
+      return Object.keys(expected.value).every((key) =>
+        Object.prototype.hasOwnProperty.call(actual, key) && matchesInternal(actual[key], expected.value[key], pairs))
     case "arrayContaining":
-      return Array.isArray(actual) && matchesUnordered(actual, expected.value, pairs)
+      if (!Array.isArray(actual)) return false
+      if (markPair(pairs, actual, expected)) return true
+      return matchesUnordered(actual, expected.value, pairs)
   }
 }
 
@@ -254,22 +258,27 @@ function collectPartial(actual, expected, path, differences, pairs) {
 /** @param {any} value @returns {string} */
 function constructorName(value) { return value?.name || "anonymous" }
 
-/** @param {AsymmetricMatcher} matcher @returns {string} */
-export function asymmetricDescription(matcher) {
+/** @param {AsymmetricMatcher} matcher @param {Map<object, number>} seen @param {{next: number}} state @param {number} depth @returns {string} */
+function asymmetricDescriptionInternal(matcher, seen, state, depth) {
   switch (matcher.__velociousMatcher) {
     case "anything": return "anything()"
     case "any": return `any(${constructorName(matcher.value)})`
-    case "stringContaining": return `stringContaining(${stableFormat(matcher.value)})`
-    case "stringMatching": return `stringMatching(${stableFormat(matcher.value)})`
-    case "arrayContaining": return `arrayContaining(${stableFormat(matcher.value)})`
-    case "objectContaining": return `objectContaining(${stableFormat(matcher.value)})`
+    case "stringContaining": return `stringContaining(${stableFormatInternal(matcher.value, seen, state, depth + 1)})`
+    case "stringMatching": return `stringMatching(${stableFormatInternal(matcher.value, seen, state, depth + 1)})`
+    case "arrayContaining": return `arrayContaining(${stableFormatInternal(matcher.value, seen, state, depth + 1)})`
+    case "objectContaining": return `objectContaining(${stableFormatInternal(matcher.value, seen, state, depth + 1)})`
   }
+}
+
+/** @param {AsymmetricMatcher} matcher @returns {string} */
+export function asymmetricDescription(matcher) {
+  return asymmetricDescriptionInternal(matcher, new Map(), {next: 1}, 0)
 }
 
 /** @param {any} value @param {Map<object, number>} seen @param {{next: number}} state @param {number} depth @returns {string} */
 function stableFormatInternal(value, seen, state, depth) {
   if (value === MISSING) return "<missing>"
-  if (isAsymmetricMatcher(value)) return asymmetricDescription(value)
+  if (isAsymmetricMatcher(value)) return asymmetricDescriptionInternal(value, seen, state, depth)
   if (value === undefined) return "undefined"
   if (value === null) return "null"
   if (typeof value === "string") return JSON.stringify(value)

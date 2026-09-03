@@ -53,6 +53,14 @@ const explicitMatcher: CustomMatcher = function (received, expected) {
 }
 void explicitMatcher
 
+const structuralThenable: PromiseLike<CustomMatcherResult> = {
+  then(onfulfilled, onrejected) {
+    return Promise.resolve(explicitResult).then(onfulfilled, onrejected)
+  }
+}
+const promiseLikeMatcher: CustomMatcher = function () { return structuralThenable }
+void promiseLikeMatcher
+
 const customDefinitions: CustomMatcherDefinitions = {
   toBeDivisibleBy(received, divisor) {
     return {

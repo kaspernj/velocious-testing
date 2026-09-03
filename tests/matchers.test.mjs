@@ -42,6 +42,38 @@ test("containing matchers compose and preserve duplicate requirements", () => {
   )
 })
 
+test("recursive containing matchers return matching and non-matching outcomes without overflowing", () => {
+  const objectPattern = {}
+  const objectMatcher = objectContaining(objectPattern)
+  objectPattern.self = objectMatcher
+  objectPattern.label = "same"
+  for (const label of ["same", "different"]) {
+    const actual = {label}
+    actual.self = actual
+
+    assert.equal(matches(actual, objectMatcher), label === "same")
+  }
+
+  const arrayPattern = []
+  const arrayMatcher = arrayContaining(arrayPattern)
+  arrayPattern.push(arrayMatcher, "same")
+  for (const label of ["same", "different"]) {
+    const actual = []
+    actual.push(actual, label)
+
+    assert.equal(matches(actual, arrayMatcher), label === "same")
+    if (label === "different") {
+      assert.throws(() => expect(actual).toEqual(arrayMatcher), {
+        message: [
+          'Expected ["[Circular]","different"] to match [{"__velociousMatcher":"arrayContaining","value":"[Circular]"},"same"]',
+          "Diff:",
+          '  $: expected arrayContaining([arrayContaining(<Circular #1>), "same"]), received [<Circular #1>, "different"]'
+        ].join("\n")
+      })
+    }
+  }
+})
+
 test("asymmetric matchers compose through equality, containment, sets, and mock calls", () => {
   const scope = createMockScope()
   const implementation = scope.fn()
@@ -338,6 +370,55 @@ test("custom matchers support asynchronous results and promise chains", async ()
   await assert.rejects(expect(Promise.resolve(3)).resolves.toBeEvenEventually(), {
     message: "Expected 3 to be even"
   })
+})
+
+test("custom matcher thenables read then once and preserve settlement behavior and receiver identity", async () => {
+  expect.extend({
+    toUseCustomResultThenable(_received, thenable) { return thenable }
+  })
+
+  /** @param {"fulfill" | "reject" | "throw"} behavior @param {any} value */
+  function oneShotThenable(behavior, value) {
+    let reads = 0
+    let calls = 0
+    let receiver
+    const thenable = {
+      get then() {
+        reads += 1
+        if (reads > 1) throw new Error("custom matcher then accessor was read more than once")
+        return function (resolve, reject) {
+          calls += 1
+          receiver = this
+          if (behavior === "throw") throw value
+          if (behavior === "reject") reject(value)
+          else resolve(value)
+        }
+      }
+    }
+    return {thenable, state: () => ({reads, calls, receiver})}
+  }
+
+  const fulfilled = oneShotThenable("fulfill", {pass: true, message: "unused"})
+  const fulfillment = expect(1).toUseCustomResultThenable(fulfilled.thenable)
+  assert.deepEqual(fulfilled.state(), {reads: 1, calls: 0, receiver: undefined})
+  await fulfillment
+  assert.deepEqual(fulfilled.state(), {reads: 1, calls: 1, receiver: fulfilled.thenable})
+
+  const rejectionReason = new Error("custom matcher result rejected")
+  const rejected = oneShotThenable("reject", rejectionReason)
+  await assert.rejects(expect(1).toUseCustomResultThenable(rejected.thenable), (error) => error === rejectionReason)
+  assert.deepEqual(rejected.state(), {reads: 1, calls: 1, receiver: rejected.thenable})
+
+  const thrownReason = new Error("custom matcher then threw")
+  const thrown = oneShotThenable("throw", thrownReason)
+  await assert.rejects(expect(1).toUseCustomResultThenable(thrown.thenable), (error) => error === thrownReason)
+  assert.deepEqual(thrown.state(), {reads: 1, calls: 1, receiver: thrown.thenable})
+
+  const invalid = oneShotThenable("fulfill", undefined)
+  await assert.rejects(expect(1).toUseCustomResultThenable(invalid.thenable), {
+    message: 'Custom matcher "toUseCustomResultThenable" must return an object'
+  })
+  assert.deepEqual(invalid.state(), {reads: 1, calls: 1, receiver: invalid.thenable})
 })
 
 test("expect.extend validates definitions and results atomically with stable errors", async () => {
