@@ -62,6 +62,15 @@ test("recursive containing matchers return matching and non-matching outcomes wi
     actual.push(actual, label)
 
     assert.equal(matches(actual, arrayMatcher), label === "same")
+    if (label === "different") {
+      assert.throws(() => expect(actual).toEqual(arrayMatcher), {
+        message: [
+          'Expected ["[Circular]","different"] to match [{"__velociousMatcher":"arrayContaining","value":"[Circular]"},"same"]',
+          "Diff:",
+          '  $: expected arrayContaining([arrayContaining(<Circular #1>), "same"]), received [<Circular #1>, "different"]'
+        ].join("\n")
+      })
+    }
   }
 })
 
