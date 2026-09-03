@@ -28,7 +28,9 @@
  */
 /**
  * @template {Function} T
- * @typedef {T extends (...args: any[]) => PromiseLike<infer Value> ? Value : never} MockResolvedValue
+ * @typedef {[T] extends [(...args: any[]) => infer Result] ?
+ *   [Result] extends [never] ? never :
+ *   [Result] extends [PromiseLike<infer Value>] ? Value : never : never} MockResolvedValue
  */
 /**
  * @typedef {object} MockState

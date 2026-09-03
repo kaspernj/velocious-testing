@@ -48,6 +48,10 @@ asyncMock.mockResolvedValue(123)
 declare const mixedImplementation:
   ((value: string) => string) | ((value: string) => Promise<string>)
 const mixedMock = scope.fn(mixedImplementation)
+// @ts-expect-error Resolved helpers require every union branch to return a Promise.
+mixedMock.mockResolvedValue("resolved")
+// @ts-expect-error One-shot resolved helpers require every union branch to return a Promise.
+mixedMock.mockResolvedValueOnce("resolved once")
 // @ts-expect-error Rejected helpers require every union branch to return a Promise.
 mixedMock.mockRejectedValue(new Error("rejected"))
 // @ts-expect-error One-shot rejected helpers require every union branch to return a Promise.
@@ -64,12 +68,20 @@ synchronousOnceMock.mockRejectedValue(new Error("rejected"))
 synchronousOnceMock.mockRejectedValueOnce(new Error("rejected once"))
 
 const alwaysThrowingMock = scope.fn(() => { throw new Error("always throws") })
+// @ts-expect-error Resolved helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockResolvedValue("resolved")
+// @ts-expect-error One-shot resolved helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockResolvedValueOnce("resolved once")
 // @ts-expect-error Rejected helpers cannot replace a never-returning contract with a Promise.
 alwaysThrowingMock.mockRejectedValue(new Error("rejected"))
 // @ts-expect-error One-shot rejected helpers cannot replace a never-returning contract with a Promise.
 alwaysThrowingMock.mockRejectedValueOnce(new Error("rejected once"))
 
 const neverPromiseMock = scope.fn((): Promise<never> => Promise.reject(new Error("always rejects")))
+// @ts-expect-error A Promise<never> has no compatible resolved value.
+neverPromiseMock.mockResolvedValue("resolved")
+// @ts-expect-error A Promise<never> has no compatible one-shot resolved value.
+neverPromiseMock.mockResolvedValueOnce("resolved once")
 neverPromiseMock.mockRejectedValue(new Error("rejected"))
   .mockRejectedValueOnce(new Error("rejected once"))
 
@@ -77,6 +89,10 @@ const ConstructorDouble = scope.fn(Constructed)
 const constructed: Constructed = new ConstructorDouble("constructed")
 void constructed
 ConstructorDouble.mockImplementation(Constructed).mockImplementationOnce(Constructed)
+// @ts-expect-error Resolved helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockResolvedValue("resolved")
+// @ts-expect-error One-shot resolved helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockResolvedValueOnce("resolved once")
 // @ts-expect-error Rejected helpers cannot add a call contract to a constructor-only mock.
 ConstructorDouble.mockRejectedValue(new Error("rejected"))
 // @ts-expect-error One-shot rejected helpers cannot add a call contract to a constructor-only mock.
@@ -116,6 +132,7 @@ unconfigured.mockImplementation((value: string) => value)
 unconfigured.mockReturnValue({return: "fallback"})
 unconfigured.mockReturnValueOnce({return: "once fallback"})
 unconfigured.mockResolvedValue("resolved fallback")
+unconfigured.mockResolvedValueOnce("resolved once fallback")
 unconfigured.mockRejectedValue("rejected fallback")
 unconfigured.mockRejectedValueOnce("rejected once fallback")
 
