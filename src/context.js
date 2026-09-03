@@ -4,7 +4,7 @@ import {TestEvents} from "./events.js"
 import {expect} from "./matchers.js"
 
 export const PROTOCOL_MAJOR = 1
-export const CONTEXT_SCHEMA_VERSION = 2
+export const CONTEXT_SCHEMA_VERSION = 3
 export const DEFAULT_CONTEXT_SYMBOL = Symbol.for("@velocious/testing.default-context.v1")
 
 /** @typedef {{filePath?: string, line?: number}} DeclarationLocation */

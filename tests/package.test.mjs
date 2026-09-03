@@ -10,11 +10,28 @@ import {build as bundle} from "esbuild"
 
 const exec = promisify(execFile)
 const TEST_DURATION_PATTERN = String.raw`\((?:\d+ms|\d+\.\d{3}s)\)`
+const BASELINE_COMMIT = "5906c839dc21b296147c3a25fc9e66cd42000780"
 
 /** @param {Record<string, any>} tree @returns {boolean} */
 function hasVelociousDependency(tree) {
   if (Object.hasOwn(tree.dependencies || {}, "velocious")) return true
   return Object.values(tree.dependencies || {}).some((dependency) => hasVelociousDependency(dependency))
+}
+
+/** @param {string} directory */
+async function materializeBaselineSourceCopy(directory) {
+  await mkdir(path.join(directory, "src"), {recursive: true})
+  for (const file of ["package.json", "src/context.js", "src/events.js", "src/index.js", "src/matchers.js", "src/mocks.js"]) {
+    const contents = (await exec("git", ["show", `${BASELINE_COMMIT}:${file}`], {cwd: process.cwd()})).stdout
+    await writeFile(path.join(directory, file), contents)
+  }
+}
+
+/** @param {string} directory */
+async function materializeCandidateSourceCopy(directory) {
+  await mkdir(directory, {recursive: true})
+  await cp("src", path.join(directory, "src"), {recursive: true})
+  await cp("package.json", path.join(directory, "package.json"))
 }
 
 test("lockfile and package metadata contain no Velocious dependency", async () => {
@@ -42,6 +59,55 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
     }
   } finally {
     await rm(directory, {recursive: true, force: true})
+  }
+})
+
+test("baseline and advanced-matcher package copies reject mixed context schemas in both load orders", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-mixed-copies-"))
+  const baseline = path.join(fixture, "baseline")
+  const candidate = path.join(fixture, "candidate")
+  try {
+    await materializeBaselineSourceCopy(baseline)
+    await materializeCandidateSourceCopy(candidate)
+    const probes = []
+    for (const order of [[baseline, candidate], [candidate, baseline]]) {
+      const firstSpecifier = JSON.stringify(path.join(order[0], "src", "index.js"))
+      const secondSpecifier = JSON.stringify(path.join(order[1], "src", "index.js"))
+      const probe = await exec("node", ["--input-type=module", "--eval", [
+        `const first = await import(${firstSpecifier});`,
+        "let second; let error;",
+        `try { second = await import(${secondSpecifier}) } catch (caught) { error = caught }`,
+        "let candidateContract;",
+        `if (second && ${JSON.stringify(order[1] === candidate)}) {`,
+        "  const installed = second.installGlobals({});",
+        "  const contextExpectation = second.defaultTestContext.expect(Promise.resolve(1));",
+        "  candidateContract = {",
+        "    resolves: typeof contextExpectation.resolves,",
+        "    rejects: typeof contextExpectation.rejects,",
+        "    extend: typeof second.defaultTestContext.expect.extend,",
+        "    any: typeof second.defaultTestContext.expect.any,",
+        "    globalExtend: typeof installed.expect.extend",
+        "  };",
+        "}",
+        "console.log(JSON.stringify({firstSchema: first.defaultTestContext.schemaVersion, secondLoaded: Boolean(second), error: error?.message, candidateContract}));"
+      ].join("\n")], {cwd: fixture})
+      probes.push(JSON.parse(probe.stdout))
+    }
+
+    assert.deepEqual(probes, [
+      {
+        firstSchema: 2,
+        secondLoaded: false,
+        error: "Incompatible @velocious/testing default context: found protocol 1/schema 2, expected protocol 1/schema 3"
+      },
+      {
+        firstSchema: 3,
+        secondLoaded: false,
+        error: "Incompatible @velocious/testing default context: found protocol 1/schema 3, expected protocol 1/schema 2"
+      }
+    ])
+  } finally {
+    await rm(fixture, {recursive: true, force: true})
   }
 })
 
@@ -123,17 +189,17 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     const compatibleCopies = await exec("node", ["--input-type=module", "--eval", [
       `const first = await import(${JSON.stringify(path.join(installedPackage, "build", "index.js"))});`,
       `const second = await import(${JSON.stringify(path.join(physicalCopy, "build", "index.js"))});`,
-      'if (first.defaultTestContext !== second.defaultTestContext) throw new Error("schema-2 copies split the default context")',
+      'if (first.defaultTestContext !== second.defaultTestContext) throw new Error("schema-3 copies split the default context")',
       'first.describe("shared physical tree", () => first.it("visible", () => {}));',
       'if (second.defaultTestContext.registry.suites.at(-1)?.name !== "shared physical tree") throw new Error("registration was not shared")',
       'console.log(`${first.defaultTestContext.protocolMajor}/${first.defaultTestContext.schemaVersion}`)'
     ].join("\n")], {cwd: fixture})
-    assert.equal(compatibleCopies.stdout.trim(), "1/2")
+    assert.equal(compatibleCopies.stdout.trim(), "1/3")
     await exec("node", ["--input-type=module", "--eval", [
       'globalThis[Symbol.for("@velocious/testing.default-context.v1")] = {protocolMajor: 1, schemaVersion: 1, registry: {suites: []}};',
       `await import(${JSON.stringify(path.join(physicalCopy, "build", "index.js"))}).then(`,
       '  () => { throw new Error("schema mismatch unexpectedly registered") },',
-      '  (error) => { if (!/found protocol 1\\/schema 1, expected protocol 1\\/schema 2/.test(error.message)) throw error }',
+      '  (error) => { if (!/found protocol 1\\/schema 1, expected protocol 1\\/schema 3/.test(error.message)) throw error }',
       ')'
     ].join("\n")], {cwd: fixture})
     await mkdir(path.join(fixture, "tests"))

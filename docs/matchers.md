@@ -1,6 +1,6 @@
 # Advanced matchers
 
-The root expectation API is browser/Metro-safe. Its comparison, formatting, promise, and extension behavior uses no Node built-ins and does not change test-context or runner protocol records.
+The root expectation API is browser/Metro-safe. Its comparison, formatting, promise, and extension behavior uses no Node built-ins and does not change runner records. Because `TestContext.expect` and `installGlobals()` expose this API, advanced-matcher contexts use context schema 3; mixing them with schema-2 package copies fails deterministically at import time rather than reusing an older matcher engine.
 
 ## Promise assertions
 

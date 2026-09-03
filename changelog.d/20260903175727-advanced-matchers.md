@@ -1,1 +1,1 @@
-Add browser-safe promise assertions, composable asymmetric and custom matchers, deterministic bounded structural differences, generated declarations, and standalone package coverage without changing context or runner protocols.
+Add browser-safe promise assertions, composable asymmetric and custom matchers, deterministic bounded structural differences, generated declarations, standalone package coverage, and context schema 3 compatibility identity without changing the protocol major or runner records.

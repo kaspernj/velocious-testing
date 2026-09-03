@@ -1,4 +1,4 @@
-# Declaration states and schema-2 migration
+# Declaration states and context-schema migration
 
 ## DSL behavior
 
@@ -25,8 +25,8 @@ The `tests` array and passed/failed event records retain their prior meaning: th
 
 ## Upgrading physical copies
 
-Protocol major remains 1 and the global key remains `Symbol.for("@velocious/testing.default-context.v1")`, but `CONTEXT_SCHEMA_VERSION` is now 2. Every physical copy in a JavaScript realm must use schema 2. A schema-1/schema-2 mix throws during module initialization before either copy can register against the other's tree.
+Protocol major remains 1 and the global key remains `Symbol.for("@velocious/testing.default-context.v1")`, but `CONTEXT_SCHEMA_VERSION` is now 3. Schema 2 introduced the declaration records described above. Schema 3 retains those records and identifies the advanced expectation engine exposed through `TestContext.expect` and `installGlobals()`. A schema-2/schema-3 mix throws during module initialization instead of allowing a newer package copy to reuse an older context with missing promise, asymmetric, or custom matcher APIs. Schema-1/schema-3 mixes fail in the same way.
 
-Upgrade all direct, workspace, and plugin copies together, then restart the process so no schema-1 default context remains on the global symbol. Compatible schema-2 copies reuse the same default context and registration tree. If a consumer cannot upgrade every copy, keep the entire realm on the prior package release; do not delete or rewrite the global symbol at runtime as a compatibility workaround.
+Upgrade all direct, workspace, and plugin copies together, then restart the process so no older default context remains on the global symbol. Compatible schema-3 copies reuse the same default context, matcher engine, and registration tree. If a consumer cannot upgrade every copy, keep the entire realm on the prior package release; do not delete, rewrite, or patch the global context at runtime as a compatibility workaround.
 
 Isolated contexts created with `createTestContext()` continue to own independent registry, config, events, and declaration state. `reset()` replaces the registry, so repeated isolated and default-context runs do not retain state from prior declarations.

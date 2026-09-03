@@ -52,18 +52,40 @@ function matchesConstructor(actual, constructor) {
   try { return actual instanceof constructor } catch { return false }
 }
 
-/** @param {any[]} actual @param {any[]} expected @param {[any, any][]} pairs @param {number} [expectedIndex] @param {Set<number>} [used] @returns {boolean} */
-function matchesUnordered(actual, expected, pairs, expectedIndex = 0, used = new Set()) {
-  if (expectedIndex === expected.length) return true
-  for (let index = 0; index < actual.length; index += 1) {
-    if (used.has(index)) continue
-    const branchPairs = [...pairs]
-    if (!matchesInternal(actual[index], expected[expectedIndex], branchPairs)) continue
-    used.add(index)
-    if (matchesUnordered(actual, expected, branchPairs, expectedIndex + 1, used)) return true
-    used.delete(index)
+/** @param {any[]} actual @param {any[]} expected @param {[any, any][]} pairs @returns {boolean} */
+function matchesUnordered(actual, expected, pairs) {
+  if (expected.length > actual.length) return false
+  /** @type {Array<Array<boolean | undefined>>} */
+  const compatibility = expected.map(() => Array(actual.length))
+  const actualAssignments = Array(actual.length).fill(-1)
+
+  /** @param {number} expectedIndex @param {number} actualIndex @returns {boolean} */
+  const compatible = (expectedIndex, actualIndex) => {
+    const cached = compatibility[expectedIndex][actualIndex]
+    if (cached !== undefined) return cached
+    const result = matchesInternal(actual[actualIndex], expected[expectedIndex], [...pairs])
+    compatibility[expectedIndex][actualIndex] = result
+    return result
   }
-  return false
+
+  /** @param {number} expectedIndex @param {Set<number>} visited @returns {boolean} */
+  const augment = (expectedIndex, visited) => {
+    for (let actualIndex = 0; actualIndex < actual.length; actualIndex += 1) {
+      if (visited.has(actualIndex) || !compatible(expectedIndex, actualIndex)) continue
+      visited.add(actualIndex)
+      const previousExpectedIndex = actualAssignments[actualIndex]
+      if (previousExpectedIndex === -1 || augment(previousExpectedIndex, visited)) {
+        actualAssignments[actualIndex] = expectedIndex
+        return true
+      }
+    }
+    return false
+  }
+
+  for (let expectedIndex = 0; expectedIndex < expected.length; expectedIndex += 1) {
+    if (!augment(expectedIndex, new Set())) return false
+  }
+  return true
 }
 
 /** @param {any} actual @param {AsymmetricMatcher} expected @param {[any, any][]} pairs @returns {boolean} */

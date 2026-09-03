@@ -13,6 +13,7 @@ import {
   stringMatching,
   waitForEvent
 } from "../src/index.js"
+import {matches} from "../src/equality.js"
 
 test("equality and representative failure messages are Velocious-compatible", () => {
   expect({id: 1, nested: ["a"]}).toEqual({id: 1, nested: ["a"]})
@@ -66,6 +67,29 @@ test("asymmetric matchers compose through equality, containment, sets, and mock 
     name: stringMatching("Hopper$"),
     enabled: anyValue(Boolean)
   }))
+})
+
+test("unordered asymmetric matching uses bounded work and can reassign earlier matches", () => {
+  expect([1, 2]).toEqual(arrayContaining([anything(), 1]))
+  expect(new Set([1, 2])).toEqual(new Set([anything(), 1]))
+
+  const size = 8
+  let propertyReads = 0
+  const actual = Array.from({length: size}, () => Object.defineProperty({}, "never", {
+    enumerable: true,
+    get() {
+      propertyReads += 1
+      if (propertyReads > size * size) throw new Error("unordered comparison exceeded its polynomial edge budget")
+      return false
+    }
+  }))
+  const expected = arrayContaining([
+    ...Array.from({length: size - 1}, () => anything()),
+    objectContaining({never: true})
+  ])
+
+  assert.equal(matches(actual, expected), false)
+  assert.ok(propertyReads <= size * size, `expected at most ${size * size} property reads but got ${propertyReads}`)
 })
 
 test("asymmetric matcher factories validate inputs and preserve regular expression state", () => {
