@@ -17,7 +17,7 @@ import {
 /** @typedef {import("./equality.js").ContainingMatcher} ContainingMatcher */
 /** @typedef {{pass: boolean, message: string | (() => string)}} CustomMatcherResult */
 /** @typedef {{isNot: boolean, equals: (actual: any, expected: any) => boolean, format: (value: any) => string, diff: (actual: any, expected: any) => string}} CustomMatcherContext */
-/** @typedef {(this: CustomMatcherContext, received: any, ...expected: any[]) => CustomMatcherResult | Promise<CustomMatcherResult>} CustomMatcher */
+/** @typedef {(this: CustomMatcherContext, received: any, ...expected: any[]) => CustomMatcherResult | PromiseLike<CustomMatcherResult>} CustomMatcher */
 /** @typedef {Record<string, CustomMatcher>} CustomMatcherDefinitions */
 
 /** @type {Map<string, CustomMatcher>} */
@@ -546,7 +546,7 @@ function completeCustomMatcher(name, result, context) {
   throw new Error(message)
 }
 
-/** @param {CustomMatcherResult | Promise<CustomMatcherResult>} result @returns {Function | undefined} */
+/** @param {CustomMatcherResult | PromiseLike<CustomMatcherResult>} result @returns {Function | undefined} */
 function customMatcherPromiseThen(result) {
   const then = result && /** @type {any} */ (result).then
   return typeof then === "function" ? then : undefined
