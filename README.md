@@ -72,7 +72,7 @@ await expect(Promise.resolve({id: 7, name: "Ada"})).resolves.toEqual({
 })
 ```
 
-Return or await promise assertions so the runner can apply its normal timeout, retry, and failure accounting. Positive equality and mock-argument failures include bounded, deterministic structural differences. See [Advanced matchers](docs/matchers.md) for settlement behavior, custom matcher validation and TypeScript augmentation.
+Return or await promise assertions so the runner can apply its normal timeout, retry, and failure accounting. Recursive containing patterns are cycle-safe, and promise-like custom matcher results read `then` once while preserving its receiver. Positive equality and mock-argument failures include bounded, deterministic structural differences. See [Advanced matchers](docs/matchers.md) for settlement behavior, custom matcher validation and TypeScript augmentation.
 
 Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, and `*-test.*` files under `test`, `tests`, `spec`, or `__tests__`:
 

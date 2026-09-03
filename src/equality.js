@@ -102,10 +102,14 @@ function matchesAsymmetric(actual, expected, pairs) {
       return matchesExpression(expression, actual)
     }
     case "objectContaining":
-      return Boolean(actual && typeof actual === "object" && Object.keys(expected.value).every((key) =>
-        Object.prototype.hasOwnProperty.call(actual, key) && matchesInternal(actual[key], expected.value[key], pairs)))
+      if (!actual || typeof actual !== "object") return false
+      if (markPair(pairs, actual, expected)) return true
+      return Object.keys(expected.value).every((key) =>
+        Object.prototype.hasOwnProperty.call(actual, key) && matchesInternal(actual[key], expected.value[key], pairs))
     case "arrayContaining":
-      return Array.isArray(actual) && matchesUnordered(actual, expected.value, pairs)
+      if (!Array.isArray(actual)) return false
+      if (markPair(pairs, actual, expected)) return true
+      return matchesUnordered(actual, expected.value, pairs)
   }
 }
 

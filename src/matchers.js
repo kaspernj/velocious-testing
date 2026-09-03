@@ -546,9 +546,10 @@ function completeCustomMatcher(name, result, context) {
   throw new Error(message)
 }
 
-/** @param {CustomMatcherResult | Promise<CustomMatcherResult>} result @returns {result is Promise<CustomMatcherResult>} */
-function isCustomMatcherPromise(result) {
-  return Boolean(result && typeof /** @type {any} */ (result).then === "function")
+/** @param {CustomMatcherResult | Promise<CustomMatcherResult>} result @returns {Function | undefined} */
+function customMatcherPromiseThen(result) {
+  const then = result && /** @type {any} */ (result).then
+  return typeof then === "function" ? then : undefined
 }
 
 /** @param {Expect} expectation @param {string} name @param {any[]} args @returns {void | Promise<void>} */
@@ -562,10 +563,11 @@ function invokeCustomMatcher(expectation, name, args) {
     diff: (/** @type {any} */ actual, /** @type {any} */ expected) => formatDiff(actual, expected)
   })
   const result = Reflect.apply(implementation, context, [expectation.value, ...args])
-  if (isCustomMatcherPromise(result)) {
-    return Promise.resolve(result).then((resolved) => completeCustomMatcher(name, resolved, context))
+  const then = customMatcherPromiseThen(result)
+  if (then) {
+    return assimilatePromiseValue(result, then).then((resolved) => completeCustomMatcher(name, resolved, context))
   }
-  completeCustomMatcher(name, result, context)
+  completeCustomMatcher(name, /** @type {CustomMatcherResult} */ (result), context)
 }
 
 /** @param {CustomMatcherDefinitions} definitions @returns {void} */
