@@ -24,6 +24,8 @@ describe("client", () => {
 
 Use `mockImplementation`, `mockReturnValue`, `mockResolvedValue`, and `mockRejectedValue` for persistent behavior. Their `Once` variants form one FIFO queue shared by all one-shot helpers. When the queue is exhausted, the persistent implementation runs; without one, the mock returns `undefined`. Every helper is chainable.
 
+Declarations preserve the original implementation contract: return helpers accept the call result for callable implementations or the instance type for constructor-only implementations, and resolved or rejected helpers are available only for promise-returning call contracts. Completely unconfigured mocks retain permissive helper arguments.
+
 `mockClear()` empties the four history arrays in place and preserves behavior. `mockReset()` also empties queued and persistent behavior, including the implementation originally passed to `fn`. Invocation numbering is monotonic for the lifetime of a scope and is not restarted by clear or reset.
 
 ## Property spies and stubs

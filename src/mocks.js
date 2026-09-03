@@ -18,7 +18,8 @@
  */
 /**
  * @template {Function} T
- * @typedef {T extends (...args: any[]) => infer Result ? Result : any} MockReturnValue
+ * @typedef {T extends (...args: any[]) => infer Result ? Result :
+ *   T extends new (...args: any[]) => infer Instance ? Instance : any} MockReturnValue
  */
 /**
  * @template {Function} T
@@ -48,8 +49,8 @@
  *   mockReturnValueOnce: (value: MockReturnValue<T>) => MockFunction<T>,
  *   mockResolvedValue: (value: MockResolvedValue<T>) => MockFunction<T>,
  *   mockResolvedValueOnce: (value: MockResolvedValue<T>) => MockFunction<T>,
- *   mockRejectedValue: (reason: any) => MockFunction<T>,
- *   mockRejectedValueOnce: (reason: any) => MockFunction<T>
+ *   mockRejectedValue: (reason: T extends (...args: any[]) => PromiseLike<any> ? any : never) => MockFunction<T>,
+ *   mockRejectedValueOnce: (reason: T extends (...args: any[]) => PromiseLike<any> ? any : never) => MockFunction<T>
  * }} MockFunction<T>
  */
 /**

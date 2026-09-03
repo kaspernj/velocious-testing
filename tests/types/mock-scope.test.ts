@@ -40,6 +40,8 @@ configured.mockReturnValue(123)
 const asyncMock = scope.fn(async (value: number) => String(value))
   .mockResolvedValueOnce("resolved once")
   .mockResolvedValue("resolved")
+  .mockRejectedValueOnce(new Error("rejected once"))
+  .mockRejectedValue(new Error("rejected"))
 // @ts-expect-error Resolve helpers retain the promised result contract.
 asyncMock.mockResolvedValue(123)
 
@@ -48,11 +50,21 @@ scope.fn((value: string) => value).mockResolvedValue("resolved")
 const synchronousOnceMock = scope.fn((value: string) => value)
 // @ts-expect-error One-shot resolved helpers cannot replace a typed synchronous return contract with a Promise.
 const invalidSynchronousResolvedResult: string = synchronousOnceMock.mockResolvedValueOnce("resolved")("value")
+// @ts-expect-error Rejected helpers cannot replace a typed synchronous return contract with a Promise.
+synchronousOnceMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot replace a typed synchronous return contract with a Promise.
+synchronousOnceMock.mockRejectedValueOnce(new Error("rejected once"))
 
 const ConstructorDouble = scope.fn(Constructed)
 const constructed: Constructed = new ConstructorDouble("constructed")
 void constructed
 ConstructorDouble.mockImplementation(Constructed).mockImplementationOnce(Constructed)
+ConstructorDouble.mockReturnValue(new Constructed("returned"))
+  .mockReturnValueOnce(new Constructed("returned once"))
+// @ts-expect-error Return helpers retain the supplied constructor's instance contract.
+ConstructorDouble.mockReturnValue({notConstructed: true})
+// @ts-expect-error One-shot return helpers retain the supplied constructor's instance contract.
+ConstructorDouble.mockReturnValueOnce({notConstructed: true})
 // @ts-expect-error The supplied constructor's argument types are preserved.
 new ConstructorDouble(123)
 // @ts-expect-error The supplied constructor's instance type is preserved.
@@ -79,7 +91,11 @@ const unconfigured = scope.fn()
 unconfigured("callable fallback")
 new unconfigured("constructable fallback")
 unconfigured.mockImplementation((value: string) => value)
+unconfigured.mockReturnValue({return: "fallback"})
+unconfigured.mockReturnValueOnce({return: "once fallback"})
 unconfigured.mockResolvedValue("resolved fallback")
+unconfigured.mockRejectedValue("rejected fallback")
+unconfigured.mockRejectedValueOnce("rejected once fallback")
 
 const stringSpy = scope.spyOn(stringTarget, "method")
 const stringSpyResult: string = stringSpy("value")
