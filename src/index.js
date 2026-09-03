@@ -2,8 +2,25 @@
 
 import {defaultTestContext} from "./context.js"
 
+/** @typedef {import("./matchers.js").AsymmetricMatcher} AsymmetricMatcher */
+/** @typedef {import("./matchers.js").CustomMatcher} CustomMatcher */
+/** @typedef {import("./matchers.js").CustomMatcherContext} CustomMatcherContext */
+/** @typedef {import("./matchers.js").CustomMatcherDefinitions} CustomMatcherDefinitions */
+/** @typedef {import("./matchers.js").CustomMatcherResult} CustomMatcherResult */
+
 export {CONTEXT_SCHEMA_VERSION, createTestContext, defaultTestContext, installGlobals} from "./context.js"
-export {arrayContaining, expect, objectContaining, waitForEvent} from "./matchers.js"
+export {
+  any,
+  anything,
+  arrayContaining,
+  Expect,
+  expect,
+  objectContaining,
+  PromiseExpectation,
+  stringContaining,
+  stringMatching,
+  waitForEvent
+} from "./matchers.js"
 export {createMockScope, mock} from "./mocks.js"
 
 export const describe = defaultTestContext.describe

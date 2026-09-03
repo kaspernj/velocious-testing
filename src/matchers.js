@@ -1,135 +1,101 @@
 // @ts-check
 
 import {isMockFunction} from "./mocks.js"
+import {
+  createAsymmetricMatcher,
+  differenceCount,
+  formatDiff,
+  isAsymmetricMatcher,
+  isPlainObject,
+  matches,
+  matchesExpression,
+  partialMatches,
+  stableFormat
+} from "./equality.js"
 
-/** @typedef {{__velociousMatcher: "arrayContaining" | "objectContaining", value: any}} ContainingMatcher */
+/** @typedef {import("./equality.js").AsymmetricMatcher} AsymmetricMatcher */
+/** @typedef {import("./equality.js").ContainingMatcher} ContainingMatcher */
+/** @typedef {{pass: boolean, message: string | (() => string)}} CustomMatcherResult */
+/** @typedef {{isNot: boolean, equals: (actual: any, expected: any) => boolean, format: (value: any) => string, diff: (actual: any, expected: any) => string}} CustomMatcherContext */
+/** @typedef {(this: CustomMatcherContext, received: any, ...expected: any[]) => CustomMatcherResult | Promise<CustomMatcherResult>} CustomMatcher */
+/** @typedef {Record<string, CustomMatcher>} CustomMatcherDefinitions */
+
+/** @type {Map<string, CustomMatcher>} */
+const customMatchers = new Map()
+const reservedMatcherNames = new Set(["value", "negated", "changes", "settlement"])
+/** @type {WeakMap<object, {value: any, then: Function, promise?: Promise<any>}>} */
+const promiseValueStates = new WeakMap()
+
+/** @param {any} value @param {Function} then @returns {Promise<any>} */
+function assimilatePromiseValue(value, then) {
+  return new Promise((resolve, reject) => {
+    Promise.resolve().then(() => {
+      try { Reflect.apply(then, value, [resolve, reject]) } catch (error) { reject(error) }
+    })
+  })
+}
+
+/** @param {PromiseExpectation} expectation @returns {Promise<any>} */
+function promiseValue(expectation) {
+  const state = /** @type {{value: any, then: Function, promise?: Promise<any>}} */ (promiseValueStates.get(expectation))
+  if (!state.promise) state.promise = assimilatePromiseValue(state.value, state.then)
+  return state.promise
+}
+
+/** @param {PromiseExpectation} source @param {boolean} negated @returns {PromiseExpectation} */
+function copyPromiseExpectation(source, negated) {
+  const expectation = Object.create(PromiseExpectation.prototype)
+  expectation.value = source.value
+  expectation.settlement = source.settlement
+  expectation.negated = negated
+  promiseValueStates.set(expectation, /** @type {{value: any, then: Function, promise?: Promise<any>}} */ (promiseValueStates.get(source)))
+  return expectation
+}
 
 /** @param {any} value @returns {ContainingMatcher} */
 export function objectContaining(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`Expected object but got ${typeof value}`)
   }
-  return {__velociousMatcher: "objectContaining", value}
+  return /** @type {ContainingMatcher} */ (createAsymmetricMatcher("objectContaining", value))
 }
 
 /** @param {any[]} value @returns {ContainingMatcher} */
 export function arrayContaining(value) {
   if (!Array.isArray(value)) throw new Error(`Expected array but got ${typeof value}`)
-  return {__velociousMatcher: "arrayContaining", value}
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) throw new TypeError("arrayContaining() requires a dense array")
+  }
+  return /** @type {ContainingMatcher} */ (createAsymmetricMatcher("arrayContaining", value))
+}
+
+/** @returns {AsymmetricMatcher} */
+export function anything() { return createAsymmetricMatcher("anything") }
+
+/** @param {Function} constructor @returns {AsymmetricMatcher} */
+export function any(constructor) {
+  if (typeof constructor !== "function") throw new TypeError("any() requires a constructor function")
+  return createAsymmetricMatcher("any", constructor)
+}
+
+/** @param {string} value @returns {AsymmetricMatcher} */
+export function stringContaining(value) {
+  if (typeof value !== "string") throw new TypeError("stringContaining() requires a string")
+  return createAsymmetricMatcher("stringContaining", value)
+}
+
+/** @param {string | RegExp} value @returns {AsymmetricMatcher} */
+export function stringMatching(value) {
+  if (typeof value !== "string" && !(value instanceof RegExp)) {
+    throw new TypeError("stringMatching() requires a string or RegExp")
+  }
+  return createAsymmetricMatcher("stringMatching", value)
 }
 
 /** @param {any} value @returns {value is ContainingMatcher} */
 function isContaining(value) {
-  return Boolean(value && typeof value === "object" &&
-    (value.__velociousMatcher === "arrayContaining" || value.__velociousMatcher === "objectContaining"))
-}
-
-/** @param {any} value @returns {boolean} */
-function isPlainObject(value) {
-  if (!value || typeof value !== "object") return false
-  const prototype = Object.getPrototypeOf(value)
-  return prototype === Object.prototype || prototype === null
-}
-
-/** @param {any} actual @param {any} expected @returns {boolean} */
-function matches(actual, expected) {
-  if (isContaining(expected)) {
-    if (expected.__velociousMatcher === "objectContaining") {
-      if (!actual || typeof actual !== "object") return false
-      return Object.keys(expected.value).every((key) =>
-        Object.prototype.hasOwnProperty.call(actual, key) && matches(actual[key], expected.value[key]))
-    }
-
-    if (!Array.isArray(actual)) return false
-    const used = new Set()
-    return /** @type {any[]} */ (expected.value).every((/** @type {any} */ expectedItem) => {
-      const index = actual.findIndex((actualItem, candidateIndex) =>
-        !used.has(candidateIndex) && matches(actualItem, expectedItem))
-      if (index < 0) return false
-      used.add(index)
-      return true
-    })
-  }
-
-  if (Object.is(actual, expected)) return true
-  if (actual instanceof Date && expected instanceof Date) return actual.getTime() === expected.getTime()
-  if (actual instanceof RegExp && expected instanceof RegExp) {
-    return actual.source === expected.source && actual.flags === expected.flags
-  }
-  if (actual instanceof Set && expected instanceof Set) {
-    if (actual.size !== expected.size) return false
-    const remaining = [...actual]
-    return [...expected].every((expectedItem) => {
-      const index = remaining.findIndex((item) => matches(item, expectedItem))
-      if (index < 0) return false
-      remaining.splice(index, 1)
-      return true
-    })
-  }
-  if (Array.isArray(actual) && Array.isArray(expected)) {
-    return actual.length === expected.length && expected.every((item, index) => matches(actual[index], item))
-  }
-  if (isPlainObject(actual) && isPlainObject(expected)) {
-    const actualKeys = Object.keys(actual)
-    const expectedKeys = Object.keys(expected)
-    return actualKeys.length === expectedKeys.length && expectedKeys.every((key) =>
-      Object.prototype.hasOwnProperty.call(actual, key) && matches(actual[key], expected[key]))
-  }
-  return false
-}
-
-/** @param {any} actual @param {any} expected @returns {boolean} */
-function partialMatches(actual, expected) {
-  if (isContaining(expected)) return matches(actual, expected)
-  if (Array.isArray(expected)) {
-    return Array.isArray(actual) && expected.every((item, index) => partialMatches(actual[index], item))
-  }
-  if (isPlainObject(expected)) {
-    return Boolean(actual && typeof actual === "object" && Object.keys(expected).every((key) =>
-      Object.prototype.hasOwnProperty.call(actual, key) && partialMatches(actual[key], expected[key])))
-  }
-  return matches(actual, expected)
-}
-
-/** @param {any} actual @param {any} expected @param {string} path @param {Record<string, [any, any]>} differences @returns {void} */
-function collectDifferences(actual, expected, path, differences) {
-  if (isContaining(expected)) {
-    if (expected.__velociousMatcher === "arrayContaining") {
-      if (!matches(actual, expected)) differences[path || "$"] = [expected.value, actual]
-      return
-    }
-    collectDifferences(actual, expected.value, path, differences)
-    return
-  }
-  if (Array.isArray(expected)) {
-    if (!Array.isArray(actual)) {
-      differences[path || "$"] = [expected, actual]
-      return
-    }
-    expected.forEach((item, index) => collectDifferences(actual[index], item, `${path}[${index}]`, differences))
-    return
-  }
-  if (isPlainObject(expected)) {
-    if (!actual || typeof actual !== "object") {
-      differences[path || "$"] = [expected, actual]
-      return
-    }
-    for (const key of Object.keys(expected)) {
-      const nextPath = path ? `${path}.${key}` : key
-      if (!Object.prototype.hasOwnProperty.call(actual, key)) differences[nextPath] = [expected[key], undefined]
-      else collectDifferences(actual[key], expected[key], nextPath, differences)
-    }
-    return
-  }
-  if (!matches(actual, expected)) differences[path || "$"] = [expected, actual]
-}
-
-/** @param {any} actual @param {any} expected @returns {Record<string, [any, any]>} */
-function matchDifferences(actual, expected) {
-  /** @type {Record<string, [any, any]>} */
-  const differences = {}
-  collectDifferences(actual, expected, "", differences)
-  return differences
+  return isAsymmetricMatcher(value) &&
+    (value.__velociousMatcher === "arrayContaining" || value.__velociousMatcher === "objectContaining")
 }
 
 /** @param {any} value @returns {string} */
@@ -177,9 +143,18 @@ function mockCalls(value) {
 /** @param {number} count @returns {string} */
 function callCount(count) { return `${count} ${count === 1 ? "time" : "times"}` }
 
-/** @param {RegExp} expression @param {string} value @returns {boolean} */
-function matchesExpression(expression, value) {
-  return new RegExp(expression.source, expression.flags).test(value)
+/** @param {any[][]} calls @param {any[]} expected @returns {{call: any[], index: number} | undefined} */
+function closestCall(calls, expected) {
+  let closest
+  let closestDifferenceCount = Infinity
+  calls.forEach((call, index) => {
+    const count = differenceCount(call, expected)
+    if (count < closestDifferenceCount) {
+      closest = {call, index}
+      closestDifferenceCount = count
+    }
+  })
+  return closest
 }
 
 class ChangeExpectation {
@@ -198,6 +173,102 @@ class ChangeExpectation {
   }
 }
 
+/** A promise-aware view of the ordinary expectation matcher surface. */
+export class PromiseExpectation {
+  /** @param {any} value @param {"resolves" | "rejects"} settlement @param {boolean} [negated] */
+  constructor(value, settlement, negated = false) {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
+      throw new TypeError("Promise assertions require a promise-like received value")
+    }
+    const then = value.then
+    if (typeof then !== "function") throw new TypeError("Promise assertions require a promise-like received value")
+    this.value = value
+    this.settlement = settlement
+    this.negated = negated
+    promiseValueStates.set(this, {value, then})
+  }
+
+  /** @returns {PromiseExpectation} */
+  get not() { return copyPromiseExpectation(this, !this.negated) }
+
+  /** @private @param {string} name @param {any[]} args @returns {Promise<void>} */
+  async invoke(name, args) {
+    const outcome = await promiseValue(this).then(
+      (value) => ({status: "fulfilled", value}),
+      (value) => ({status: "rejected", value})
+    )
+    if (this.settlement === "resolves" && outcome.status === "rejected") {
+      throw new Error(`Expected promise to resolve, but it rejected with ${stableFormat(outcome.value)}`)
+    }
+    if (this.settlement === "rejects" && outcome.status === "fulfilled") {
+      throw new Error(`Expected promise to reject, but it resolved with ${stableFormat(outcome.value)}`)
+    }
+    const received = this.settlement === "rejects" && (name === "toThrow" || name === "toThrowError") ?
+      () => { throw outcome.value } : outcome.value
+    const expectation = new Expect(received, this.negated)
+    const matcher = /** @type {any} */ (expectation)[name]
+    if (typeof matcher !== "function") throw new TypeError(`Unknown promise matcher ${JSON.stringify(name)}`)
+    await matcher.apply(expectation, args)
+  }
+
+  /** @param {any} expected @returns {Promise<void>} */
+  async toBe(expected) { await this.invoke("toBe", [expected]) }
+  /** @param {number} expected @returns {Promise<void>} */
+  async toBeLessThan(expected) { await this.invoke("toBeLessThan", [expected]) }
+  /** @param {number} expected @returns {Promise<void>} */
+  async toBeLessThanOrEqual(expected) { await this.invoke("toBeLessThanOrEqual", [expected]) }
+  /** @param {number} expected @returns {Promise<void>} */
+  async toBeGreaterThan(expected) { await this.invoke("toBeGreaterThan", [expected]) }
+  /** @param {number} expected @returns {Promise<void>} */
+  async toBeGreaterThanOrEqual(expected) { await this.invoke("toBeGreaterThanOrEqual", [expected]) }
+  /** @param {number} expected @param {number} [precision] @returns {Promise<void>} */
+  async toBeCloseTo(expected, precision) { await this.invoke("toBeCloseTo", [expected, precision]) }
+  /** @param {number} expected @returns {Promise<void>} */
+  async toHaveLength(expected) { await this.invoke("toHaveLength", [expected]) }
+  /** @returns {Promise<void>} */
+  async toBeDefined() { await this.invoke("toBeDefined", []) }
+  /** @param {Function} klass @returns {Promise<void>} */
+  async toBeInstanceOf(klass) { await this.invoke("toBeInstanceOf", [klass]) }
+  /** @returns {Promise<void>} */
+  async toBeFalse() { await this.invoke("toBeFalse", []) }
+  /** @returns {Promise<void>} */
+  async toBeNull() { await this.invoke("toBeNull", []) }
+  /** @returns {Promise<void>} */
+  async toBeUndefined() { await this.invoke("toBeUndefined", []) }
+  /** @returns {Promise<void>} */
+  async toBeTrue() { await this.invoke("toBeTrue", []) }
+  /** @returns {Promise<void>} */
+  async toBeTruthy() { await this.invoke("toBeTruthy", []) }
+  /** @param {any} expected @returns {Promise<void>} */
+  async toContain(expected) { await this.invoke("toContain", [expected]) }
+  /** @param {any} expected @returns {Promise<void>} */
+  async toContainEqual(expected) { await this.invoke("toContainEqual", [expected]) }
+  /** @param {any} expected @returns {Promise<void>} */
+  async toInclude(expected) { await this.invoke("toInclude", [expected]) }
+  /** @param {any} expected @returns {Promise<void>} */
+  async toEqual(expected) { await this.invoke("toEqual", [expected]) }
+  /** @param {RegExp} expression @returns {Promise<void>} */
+  async toMatch(expression) { await this.invoke("toMatch", [expression]) }
+  /** @param {any} expected @returns {Promise<void>} */
+  async toMatchObject(expected) { await this.invoke("toMatchObject", [expected]) }
+  /** @returns {Promise<void>} */
+  async toHaveBeenCalled() { await this.invoke("toHaveBeenCalled", []) }
+  /** @param {number} expected @returns {Promise<void>} */
+  async toHaveBeenCalledTimes(expected) { await this.invoke("toHaveBeenCalledTimes", [expected]) }
+  /** @param {...any} expected @returns {Promise<void>} */
+  async toHaveBeenCalledWith(...expected) { await this.invoke("toHaveBeenCalledWith", expected) }
+  /** @param {...any} expected @returns {Promise<void>} */
+  async toHaveBeenLastCalledWith(...expected) { await this.invoke("toHaveBeenLastCalledWith", expected) }
+  /** @param {number} index @param {...any} expected @returns {Promise<void>} */
+  async toHaveBeenNthCalledWith(index, ...expected) { await this.invoke("toHaveBeenNthCalledWith", [index, ...expected]) }
+  /** @param {string | RegExp | Error | Function} [expected] @returns {Promise<void>} */
+  async toThrow(expected) { await this.invoke("toThrow", [expected]) }
+  /** @param {string | Error} expected @returns {Promise<void>} */
+  async toThrowError(expected) { await this.invoke("toThrowError", [expected]) }
+  /** @param {Record<string, any>} expected @returns {Promise<void>} */
+  async toHaveAttributes(expected) { await this.invoke("toHaveAttributes", [expected]) }
+}
+
 export class Expect {
   /** @param {any} value @param {boolean} [negated] */
   constructor(value, negated = false) {
@@ -209,6 +280,12 @@ export class Expect {
 
   /** @returns {Expect} */
   get not() { return new Expect(this.value, !this.negated) }
+
+  /** @returns {PromiseExpectation} */
+  get resolves() { return new PromiseExpectation(this.value, "resolves", this.negated) }
+
+  /** @returns {PromiseExpectation} */
+  get rejects() { return new PromiseExpectation(this.value, "rejects", this.negated) }
 
   /** @param {boolean} condition @param {string} positive @param {string} negative @returns {void} */
   assert(condition, positive, negative) {
@@ -273,7 +350,9 @@ export class Expect {
   toContainEqual(expected) {
     if (!Array.isArray(this.value)) throw new Error(`Expected array but got ${typeof this.value}`)
     const contains = this.value.some((item) => matches(item, expected))
-    this.assert(contains, `${formatValue(this.value)} doesn't contain ${quotedValue(expected)}`, `${formatValue(this.value)} was unexpected to contain ${quotedValue(expected)}`)
+    const closest = contains ? undefined : closestCall(this.value.map((item) => [item]), [expected])
+    const suffix = closest ? `\nClosest item ${closest.index + 1}:\n${formatDiff(closest.call[0], expected)}` : ""
+    this.assert(contains, `${formatValue(this.value)} doesn't contain ${quotedValue(expected)}${suffix}`, `${formatValue(this.value)} was unexpected to contain ${quotedValue(expected)}`)
   }
 
   /** @param {any} expected */
@@ -284,12 +363,14 @@ export class Expect {
     const equal = matches(this.value, expected)
     if (isContaining(expected)) {
       const displayed = expected.value
-      const differences = equal ? {} : matchDifferences(this.value, expected)
-      const suffix = Object.keys(differences).length ? ` (diff: ${minifiedStringify(differences)})` : ""
+      const difference = equal ? "" : formatDiff(this.value, expected)
+      const suffix = difference ? `\n${difference}` : ""
       this.assert(equal, `Expected ${formatValue(this.value)} to match ${formatValue(displayed)}${suffix}`, `Expected ${formatValue(this.value)} not to match ${formatValue(displayed)}`)
       return
     }
-    this.assert(equal, `${formatValue(this.value)} wasn't equal to ${formatValue(expected)}`, `${formatValue(this.value)} was unexpected equal to ${formatValue(expected)}`)
+    const difference = equal ? "" : formatDiff(this.value, expected)
+    const suffix = difference ? `\n${difference}` : ""
+    this.assert(equal, `${formatValue(this.value)} wasn't equal to ${formatValue(expected)}${suffix}`, `${formatValue(this.value)} was unexpected equal to ${formatValue(expected)}`)
   }
 
   /** @param {RegExp} expression */
@@ -302,8 +383,8 @@ export class Expect {
   toMatchObject(expected) {
     if (!expected || typeof expected !== "object") throw new Error(`Expected object but got ${typeof expected}`)
     const equal = partialMatches(this.value, expected)
-    const differences = equal ? {} : matchDifferences(this.value, expected)
-    const suffix = Object.keys(differences).length ? ` (diff: ${minifiedStringify(differences)})` : ""
+    const difference = equal ? "" : formatDiff(this.value, expected, {partial: true})
+    const suffix = difference ? `\n${difference}` : ""
     this.assert(equal, `Expected ${formatValue(this.value)} to match ${formatValue(expected)}${suffix}`, `Expected ${formatValue(this.value)} not to match ${formatValue(expected)}`)
   }
 
@@ -331,9 +412,11 @@ export class Expect {
   toHaveBeenCalledWith(...expected) {
     const calls = mockCalls(this.value)
     const matchingIndex = calls.findIndex((call) => matches(call, expected))
+    const closest = matchingIndex < 0 ? closestCall(calls, expected) : undefined
+    const suffix = closest ? `\nClosest call ${closest.index + 1}:\n${formatDiff(closest.call, expected)}` : ""
     this.assert(
       matchingIndex >= 0,
-      `Expected mock to have been called with ${minifiedStringify(expected)}, but actual calls were ${minifiedStringify(calls)}`,
+      `Expected mock to have been called with ${minifiedStringify(expected)}, but actual calls were ${minifiedStringify(calls)}${suffix}`,
       `Expected mock not to have been called with ${minifiedStringify(expected)}, but matching call ${matchingIndex + 1} was found`
     )
   }
@@ -346,7 +429,7 @@ export class Expect {
       actual !== undefined && matches(actual, expected),
       actual === undefined ?
         `Expected last mock call to equal ${minifiedStringify(expected)}, but no calls were recorded` :
-        `Expected last mock call to equal ${minifiedStringify(expected)}, but it was ${minifiedStringify(actual)}`,
+        `Expected last mock call to equal ${minifiedStringify(expected)}, but it was ${minifiedStringify(actual)}\n${formatDiff(actual, expected)}`,
       `Expected last mock call not to equal ${minifiedStringify(expected)}, but it did`
     )
   }
@@ -360,7 +443,7 @@ export class Expect {
       actual !== undefined && matches(actual, expected),
       actual === undefined ?
         `Expected mock call ${index} to equal ${minifiedStringify(expected)}, but only ${calls.length} ${calls.length === 1 ? "call was" : "calls were"} recorded` :
-        `Expected mock call ${index} to equal ${minifiedStringify(expected)}, but it was ${minifiedStringify(actual)}`,
+        `Expected mock call ${index} to equal ${minifiedStringify(expected)}, but it was ${minifiedStringify(actual)}\n${formatDiff(actual, expected)}`,
       `Expected mock call ${index} not to equal ${minifiedStringify(expected)}, but it did`
     )
   }
@@ -442,16 +525,97 @@ export class Expect {
     const equal = matches(actual, expected)
     this.assert(
       equal,
-      `Object had different values: ${minifiedStringify(matchDifferences(actual, expected))}`,
+      `Object had different values:\n${formatDiff(actual, expected)}`,
       `Object had unexpected values: ${minifiedStringify(actual)}`
     )
   }
 }
 
+/** @param {string} name @param {CustomMatcherResult} result @param {CustomMatcherContext} context @returns {void} */
+function completeCustomMatcher(name, result, context) {
+  if (!isPlainObject(result)) throw new TypeError(`Custom matcher ${JSON.stringify(name)} must return an object`)
+  if (typeof result.pass !== "boolean") {
+    throw new TypeError(`Custom matcher ${JSON.stringify(name)} result.pass must be a boolean`)
+  }
+  if (typeof result.message !== "string" && typeof result.message !== "function") {
+    throw new TypeError(`Custom matcher ${JSON.stringify(name)} result.message must be a string or function`)
+  }
+  if (!(context.isNot ? result.pass : !result.pass)) return
+  const message = typeof result.message === "function" ? Reflect.apply(result.message, context, []) : result.message
+  if (typeof message !== "string") throw new TypeError(`Custom matcher ${JSON.stringify(name)} message() must return a string`)
+  throw new Error(message)
+}
+
+/** @param {CustomMatcherResult | Promise<CustomMatcherResult>} result @returns {result is Promise<CustomMatcherResult>} */
+function isCustomMatcherPromise(result) {
+  return Boolean(result && typeof /** @type {any} */ (result).then === "function")
+}
+
+/** @param {Expect} expectation @param {string} name @param {any[]} args @returns {void | Promise<void>} */
+function invokeCustomMatcher(expectation, name, args) {
+  const implementation = customMatchers.get(name)
+  if (!implementation) throw new TypeError(`Unknown custom matcher ${JSON.stringify(name)}`)
+  const context = Object.freeze({
+    isNot: expectation.negated,
+    equals: matches,
+    format: stableFormat,
+    diff: (/** @type {any} */ actual, /** @type {any} */ expected) => formatDiff(actual, expected)
+  })
+  const result = Reflect.apply(implementation, context, [expectation.value, ...args])
+  if (isCustomMatcherPromise(result)) {
+    return Promise.resolve(result).then((resolved) => completeCustomMatcher(name, resolved, context))
+  }
+  completeCustomMatcher(name, result, context)
+}
+
+/** @param {CustomMatcherDefinitions} definitions @returns {void} */
+function extend(definitions) {
+  if (!isPlainObject(definitions)) {
+    throw new TypeError("expect.extend() requires a plain object of matcher functions")
+  }
+  const keys = Reflect.ownKeys(definitions)
+  if (keys.some((key) => typeof key !== "string")) throw new TypeError("Custom matcher names must be strings")
+  const names = /** @type {string[]} */ (keys).sort()
+  /** @type {Array<{name: string, implementation: CustomMatcher}>} */
+  const validated = []
+  for (const name of names) {
+    if (name.length === 0) throw new TypeError("Custom matcher names must not be empty")
+    if (customMatchers.has(name)) throw new TypeError(`Custom matcher ${JSON.stringify(name)} is already registered`)
+    if (reservedMatcherNames.has(name) || name in Expect.prototype || name in PromiseExpectation.prototype) {
+      throw new TypeError(`Custom matcher ${JSON.stringify(name)} conflicts with an existing matcher`)
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(definitions, name)
+    if (!descriptor || !("value" in descriptor) || typeof descriptor.value !== "function") {
+      throw new TypeError(`Custom matcher ${JSON.stringify(name)} must be an own data-property function`)
+    }
+    validated.push({name, implementation: descriptor.value})
+  }
+  for (const {name, implementation} of validated) {
+    customMatchers.set(name, implementation)
+    Object.defineProperty(Expect.prototype, name, {
+      configurable: false,
+      writable: false,
+      /** @this {Expect} @param {...any} args */
+      value: function (...args) { return invokeCustomMatcher(this, name, args) }
+    })
+    Object.defineProperty(PromiseExpectation.prototype, name, {
+      configurable: false,
+      writable: false,
+      /** @this {PromiseExpectation} @param {...any} args @returns {Promise<void>} */
+      value: async function (...args) { await /** @type {any} */ (this).invoke(name, args) }
+    })
+  }
+}
+
 /** @param {any} value @returns {Expect} */
 export function expect(value) { return new Expect(value) }
+expect.extend = extend
 expect.objectContaining = objectContaining
 expect.arrayContaining = arrayContaining
+expect.anything = anything
+expect.any = any
+expect.stringContaining = stringContaining
+expect.stringMatching = stringMatching
 
 /**
  * @param {{on: Function, off: Function}} emitter

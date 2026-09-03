@@ -19,8 +19,8 @@ test("default context is shared through the versioned global symbol", async () =
 
   assert.equal(duplicate.defaultTestContext, defaultTestContext)
   assert.equal(duplicateContextModule.defaultTestContext, defaultTestContext)
-  assert.equal(testing.CONTEXT_SCHEMA_VERSION, 2)
-  assert.equal(defaultTestContext.schemaVersion, 2)
+  assert.equal(testing.CONTEXT_SCHEMA_VERSION, 3)
+  assert.equal(defaultTestContext.schemaVersion, 3)
   assert.equal(Symbol.keyFor(Symbol.for("@velocious/testing.default-context.v1")), "@velocious/testing.default-context.v1")
 })
 
@@ -279,7 +279,7 @@ test("default bindings and installGlobals target the selected context", () => {
   assert.equal(target.expect, isolated.expect)
 })
 
-test("schema-1/schema-2 default contexts fail clearly before registration", async () => {
+test("schema-1/schema-3 default contexts fail clearly before registration", async () => {
   const key = Symbol.for("@velocious/testing.default-context.v1")
   const compatible = globalThis[key]
 
@@ -287,7 +287,7 @@ test("schema-1/schema-2 default contexts fail clearly before registration", asyn
     globalThis[key] = {protocolMajor: 1, schemaVersion: 1, registry: {suites: []}}
     await assert.rejects(
       import(`../src/context.js?incompatible=${Date.now()}`),
-      /Incompatible @velocious\/testing default context: found protocol 1\/schema 1, expected protocol 1\/schema 2/
+      /Incompatible @velocious\/testing default context: found protocol 1\/schema 1, expected protocol 1\/schema 3/
     )
   } finally {
     globalThis[key] = compatible
