@@ -1,6 +1,6 @@
 {
   "name": "@velocious/testing",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Independent Velocious-compatible testing DSL and standalone test runner.",
   "type": "module",
   "private": false,
