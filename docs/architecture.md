@@ -8,6 +8,8 @@
 
 `src/mocks.js` is another browser-safe core leaf. A mock scope owns only function state, a monotonic invocation counter, and explicit property-restoration registrations; a module-local weak registry prevents ambiguous property-double stacking across scopes. It does not attach to `TestContext`, alter the context protocol/schema, or participate in runner attempts and retries. This keeps isolated cleanup available through ordinary hooks without adding implicit runner coupling or cross-copy compatibility state.
 
+`src/fake-timers.js` provides explicit browser-safe clock scopes. Each scope owns its wall clock, scheduler position, timer IDs, deterministic queue, and exact installation descriptors. It replaces only Date and timeout/interval globals on a selected target and never attaches to `TestContext`; separate contexts opt into separate scopes through ordinary hooks. `src/real-time.js` captures the native wall clock, timer functions, and monotonic clock before a public scope can install replacements. Both the root and runner may depend on this browser-safe leaf without importing Node facilities.
+
 Published build and declaration maps resolve to the shipped `src/` files. Those files support debugging only: the package export map remains the complete public module boundary, with no wildcard or source/internal subpath exports.
 
 ## Context identity and protocol
@@ -20,7 +22,7 @@ A protocol-major change requires a new symbol, migration notes, dual-version com
 
 ## Runner contracts
 
-The kernel owns selection, traversal, hook inheritance/order, retries, timeouts, console capture, cleanup, and accounting. Small collaborators stay replaceable:
+The kernel owns selection, traversal, hook inheritance/order, retries, timeouts, console capture, cleanup, and accounting. Runner timeout deadlines, the custom-executor cleanup grace, attempt durations, and event timestamps use captured real primitives; user fake timers cannot suspend deadlines or rewrite accounting. A callable `globalThis.performance.now` is required as the real monotonic source. Small collaborators stay replaceable:
 
 - `attemptExecutor(input)` may wrap one lifecycle attempt and can invoke `input.defaultExecute()`. With `attemptExecutorOwnsTimeout`, it receives `timeoutMs` but the kernel waits for the executor to apply timeout and bounded cleanup before settling.
 - `testArgumentResolver(input)` returns callback arguments.
@@ -37,6 +39,6 @@ Selection defaults remain strict and standalone-compatible: include filters requ
 
 ## Deferred adapters
 
-Velocious application/configuration/database/mailer/request/model support, shared transactions, factories, browser scenarios, profiling, timing manifests, duration-aware sharding, module mocking, fake timers, accessor spying, and automatic mock cleanup are deliberately outside v1. Framework behavior belongs in separately versioned downstream adapters that depend on both systems, preventing dependency cycles. Adding one here would violate the package boundary and should be rolled back rather than hidden behind optional discovery.
+Velocious application/configuration/database/mailer/request/model support, shared transactions, factories, browser scenarios, profiling, timing manifests, duration-aware sharding, module mocking, accessor spying, and automatic mock or fake-timer cleanup are deliberately outside v1. Framework behavior belongs in separately versioned downstream adapters that depend on both systems, preventing dependency cycles. Adding one here would violate the package boundary and should be rolled back rather than hidden behind optional discovery.
 
 Releases are independent semantic versions. Compatibility changes update tests, README, this document, and a changelog fragment in the same review.

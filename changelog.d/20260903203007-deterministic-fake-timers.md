@@ -1,0 +1,1 @@
+Add explicit browser-safe deterministic fake-timer scopes for Date and timeout/interval globals, with isolated scheduling and exact restoration, while runner deadlines, durations, cleanup grace, and event timestamps remain on captured real clocks without changing context protocol records.

@@ -7,6 +7,9 @@ import {defaultTestContext} from "./context.js"
 /** @typedef {import("./matchers.js").CustomMatcherContext} CustomMatcherContext */
 /** @typedef {import("./matchers.js").CustomMatcherDefinitions} CustomMatcherDefinitions */
 /** @typedef {import("./matchers.js").CustomMatcherResult} CustomMatcherResult */
+/** @typedef {import("./fake-timers.js").FakeTimerOptions} FakeTimerOptions */
+/** @typedef {import("./fake-timers.js").FakeTimers} FakeTimers */
+/** @typedef {import("./fake-timers.js").FakeTimerTarget} FakeTimerTarget */
 
 export {CONTEXT_SCHEMA_VERSION, createTestContext, defaultTestContext, installGlobals} from "./context.js"
 export {
@@ -22,6 +25,7 @@ export {
   waitForEvent
 } from "./matchers.js"
 export {createMockScope, mock} from "./mocks.js"
+export {createFakeTimers} from "./fake-timers.js"
 
 export const describe = defaultTestContext.describe
 export const fdescribe = defaultTestContext.fdescribe

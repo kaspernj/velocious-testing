@@ -57,6 +57,29 @@ mocks.restoreAll()
 
 Mocks record calls, return/throw results, successful constructor instances, and scope-global invocation order. Persistent behavior and FIFO one-shot implementation/return/resolve/reject helpers are chainable. Typed constructor return helpers require compatible instances, while resolved and rejected helpers require promise-returning call contracts; unconfigured mocks remain permissive. `mockClear()` removes history, `mockReset()` also removes behavior, and property-double `mockRestore()` reinstates exact captured ownership and descriptors. Scope-level `clearAll()`, `resetAll()`, and reverse-order `restoreAll()` are explicit; the runner does not perform magical cleanup. See [Browser-safe test doubles](docs/test-doubles.md) for descriptor rules and lifecycle details.
 
+Deterministic fake timers are explicit isolated scopes:
+
+```js
+import {afterEach, beforeEach, createFakeTimers, describe, expect, it} from "@velocious/testing"
+
+const timers = createFakeTimers({now: new Date("2026-01-01T00:00:00Z")})
+
+describe("delayed work", () => {
+  beforeEach(() => timers.install())
+  afterEach(() => timers.restore())
+
+  it("runs after one second", () => {
+    let finished = false
+    setTimeout(() => { finished = true }, 1_000)
+    timers.advanceBy(1_000)
+    expect(finished).toBeTrue()
+    expect(Date.now()).toBe(new Date("2026-01-01T00:00:01Z").getTime())
+  })
+})
+```
+
+Only `Date`, `setTimeout`/`clearTimeout`, and `setInterval`/`clearInterval` are replaced. Advancing is synchronous and deterministically ordered; `runPending()` snapshots each current occurrence once. Restoration discards pending work and reinstates the exact original properties. Runner timeouts, cleanup grace, durations, and event timestamps always use captured real clocks. See [Deterministic fake timers](docs/fake-timers.md) for scheduling and cleanup semantics.
+
 Promise and asymmetric assertions compose with the same equality engine, and custom matchers can extend it without Node-only formatting:
 
 ```js
@@ -96,9 +119,9 @@ Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout M
 
 ## Public API
 
-The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, `test`, `fit`, `xit`, `xtest`, all four lifecycle hooks, `expect`, `Expect`, `PromiseExpectation`, `anything`, `any`, `arrayContaining`, `objectContaining`, `stringContaining`, `stringMatching`, `waitForEvent`, `mock`, `createMockScope()`, `configureTests`, `CONTEXT_SCHEMA_VERSION`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `resolves`, `rejects`, `extend`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, the five mock call matchers, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
+The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, `test`, `fit`, `xit`, `xtest`, all four lifecycle hooks, `expect`, `Expect`, `PromiseExpectation`, `anything`, `any`, `arrayContaining`, `objectContaining`, `stringContaining`, `stringMatching`, `waitForEvent`, `mock`, `createMockScope()`, `createFakeTimers()`, `configureTests`, `CONTEXT_SCHEMA_VERSION`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `resolves`, `rejects`, `extend`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, the five mock call matchers, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
 
-`@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
+`@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Its timeout deadlines and cleanup grace use captured real timers and a captured monotonic clock, so installing the package's fake timers cannot pause or advance runner bookkeeping. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
 
 Run results keep executed and setup-blocked records in `tests` and add explicit declared non-runs in `nonRunTests` with `skipped` or `todo` status. Each matched explicit non-run emits `test:skip`. `counts.total` remains the number of runnable selected tests, while `counts.skipped` includes filtered declarations and declared non-runs exactly once. A selection matching only explicit skips or todos has `noMatches: false` and succeeds when no other error occurs.
 
