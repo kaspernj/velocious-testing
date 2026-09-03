@@ -5,6 +5,16 @@ const stringTarget = {method(value: string) { return value.toUpperCase() }}
 const symbolKey = Symbol("method")
 const symbolTarget = {[symbolKey](value: number) { return value + 1 }}
 
+class MixedOverloadTarget {
+  method(value: string): string
+  method(value: number): Promise<number>
+  method(value: string | number): string | Promise<number> {
+    return typeof value === "string" ? value.toUpperCase() : Promise.resolve(value + 1)
+  }
+}
+
+const mixedOverloadTarget = new MixedOverloadTarget()
+
 class Constructed {
   value: string
 
@@ -152,6 +162,22 @@ stringSpy.mockImplementation((value: number) => value)
 stringSpy.mockImplementation((value: string) => value.length)
 // @ts-expect-error Property spy return helpers retain the selected method result contract.
 stringSpy.mockReturnValue(123)
+
+const mixedOverloadSpy = scope.spyOn(mixedOverloadTarget, "method")
+const mixedOverloadStringResult: string = mixedOverloadTarget.method("value")
+const mixedOverloadPromiseResult: Promise<number> = mixedOverloadTarget.method(1)
+void mixedOverloadStringResult
+void mixedOverloadPromiseResult
+// @ts-expect-error Calls retain the overloaded target method's arguments while it is spied upon.
+mixedOverloadTarget.method(true)
+// @ts-expect-error Resolved helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockResolvedValue(1)
+// @ts-expect-error One-shot resolved helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockResolvedValueOnce(1)
+// @ts-expect-error Rejected helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockRejectedValueOnce(new Error("rejected once"))
 
 scope.stub({method() { return "optional" }}, "method")
 const stringStub = scope.stub(stringTarget, "method", (value: string) => `stubbed:${value}`)

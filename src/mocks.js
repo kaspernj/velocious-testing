@@ -28,9 +28,15 @@
  */
 /**
  * @template {Function} T
- * @typedef {[T] extends [(...args: any[]) => infer Result] ?
- *   [Result] extends [never] ? never :
- *   [Result] extends [PromiseLike<infer Value>] ? Value : never : never} MockResolvedValue
+ * @typedef {[T] extends [AnyMockImplementation] ? any :
+ *   [T] extends [(this: infer This, ...args: infer Args) => infer Result] ?
+ *   [Pick<T, keyof T> & ((this: This, ...args: Args) => Result)] extends [T] ? Result : never : never}
+ *   MockUnambiguousCallResult
+ */
+/**
+ * @template {Function} T
+ * @typedef {[MockUnambiguousCallResult<T>] extends [never] ? never :
+ *   [MockUnambiguousCallResult<T>] extends [PromiseLike<infer Value>] ? Value : never} MockResolvedValue
  */
 /**
  * @typedef {object} MockState
@@ -51,10 +57,10 @@
  *   mockReturnValueOnce: (value: MockReturnValue<T>) => MockFunction<T>,
  *   mockResolvedValue: (value: MockResolvedValue<T>) => MockFunction<T>,
  *   mockResolvedValueOnce: (value: MockResolvedValue<T>) => MockFunction<T>,
- *   mockRejectedValue: (reason: [T] extends [(...args: any[]) => infer Result] ?
- *     [Result] extends [never] ? never : [Result] extends [PromiseLike<any>] ? any : never : never) => MockFunction<T>,
- *   mockRejectedValueOnce: (reason: [T] extends [(...args: any[]) => infer Result] ?
- *     [Result] extends [never] ? never : [Result] extends [PromiseLike<any>] ? any : never : never) => MockFunction<T>
+ *   mockRejectedValue: (reason: [MockUnambiguousCallResult<T>] extends [never] ? never :
+ *     [MockUnambiguousCallResult<T>] extends [PromiseLike<any>] ? any : never) => MockFunction<T>,
+ *   mockRejectedValueOnce: (reason: [MockUnambiguousCallResult<T>] extends [never] ? never :
+ *     [MockUnambiguousCallResult<T>] extends [PromiseLike<any>] ? any : never) => MockFunction<T>
  * }} MockFunction<T>
  */
 /**
