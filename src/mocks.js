@@ -4,15 +4,30 @@
 /** @typedef {((...args: any[]) => any) & (new (...args: any[]) => any)} AnyMockImplementation */
 /**
  * @template {Function} T
+ * @typedef {T extends (this: infer This, ...args: infer Args) => infer Result ?
+ *   (this: This, ...args: Args) => Result : unknown} MockCallSignature<T>
+ */
+/**
+ * @template {Function} T
+ * @typedef {T extends new (...args: infer Args) => infer Instance ?
+ *   new (...args: Args) => Instance : unknown} MockConstructSignature<T>
+ */
+/**
+ * @template {Function} T
+ * @typedef {MockCallSignature<T> & MockConstructSignature<T>} MockSignature<T>
+ */
+/**
+ * @template {Function} T
  * @typedef {T extends (...args: any[]) => infer Result ? Result : any} MockReturnValue
  */
 /**
  * @template {Function} T
- * @typedef {T extends AnyMockImplementation ? AnyMockImplementation extends T ? Function : T : T} MockImplementation
+ * @typedef {T extends AnyMockImplementation ?
+ *   AnyMockImplementation extends T ? Function : MockSignature<T> : MockSignature<T>} MockImplementation
  */
 /**
  * @template {Function} T
- * @typedef {T extends (...args: any[]) => PromiseLike<infer Value> ? Value : any} MockResolvedValue
+ * @typedef {T extends (...args: any[]) => PromiseLike<infer Value> ? Value : never} MockResolvedValue
  */
 /**
  * @typedef {object} MockState
@@ -23,7 +38,7 @@
  */
 /**
  * @template {Function} [T=AnyMockImplementation]
- * @typedef {T & {
+ * @typedef {MockSignature<T> & {
  *   mock: MockState,
  *   mockClear: () => MockFunction<T>,
  *   mockReset: () => MockFunction<T>,
@@ -60,7 +75,7 @@
  * @property {string | symbol} key
  * @property {PropertyDescriptor} descriptor
  * @property {boolean} owned
- * @property {RestorableMockFunction<any>} implementation
+ * @property {RestorableMockFunction} implementation
  * @property {boolean} active
  */
 
@@ -88,10 +103,10 @@ function resolveValue(value) { return Promise.resolve(value) }
 function rejectValue(reason) { return Promise.reject(reason) }
 
 /**
- * @param {Set<MockFunction<any>>} registered
+ * @param {Set<MockFunction>} registered
  * @param {() => number} nextInvocationOrder
  * @param {Function | undefined} implementation
- * @returns {MockFunction<Function>}
+ * @returns {MockFunction}
  */
 function createMockFunction(registered, nextInvocationOrder, implementation) {
   if (implementation !== undefined) validateImplementation(implementation)
@@ -102,7 +117,7 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
   /** @type {MockBehavior} */
   const behavior = {implementation, once: []}
 
-  /** @type {MockFunction<Function>} */
+  /** @type {MockFunction} */
   const mockFunction = /** @type {any} */ (/** @this {any} @param {...any} args */ function (...args) {
     const callIndex = state.calls.length
     state.calls.push(args)
@@ -215,7 +230,7 @@ function findProperty(target, key) {
 
 /** Creates an isolated registry for mock functions and property doubles. */
 export function createMockScope() {
-  /** @type {Set<MockFunction<any>>} */
+  /** @type {Set<MockFunction>} */
   const registered = new Set()
   /** @type {PropertyDoubleRecord[]} */
   const propertyRecords = []
@@ -237,7 +252,7 @@ export function createMockScope() {
     return createMockFunction(registered, nextInvocationOrder, implementation)
   }
 
-  /** @param {PropertyDoubleRecord} record @returns {RestorableMockFunction<any>} */
+  /** @param {PropertyDoubleRecord} record @returns {RestorableMockFunction} */
   const restore = (record) => {
     if (!record.active) return record.implementation
     if (record.owned) Object.defineProperty(record.target, record.key, record.descriptor)
@@ -259,7 +274,7 @@ export function createMockScope() {
    * @param {string | symbol} key
    * @param {Function | undefined} implementation
    * @param {boolean} callThrough
-   * @returns {RestorableMockFunction<Function>}
+   * @returns {RestorableMockFunction}
    */
   const replaceProperty = (target, key, implementation, callThrough) => {
     validateTarget(target)
@@ -290,7 +305,7 @@ export function createMockScope() {
       enumerable: descriptor.enumerable,
       configurable: true
     }
-    const restorable = /** @type {RestorableMockFunction<Function>} */ (/** @type {unknown} */ (double))
+    const restorable = /** @type {RestorableMockFunction} */ (/** @type {unknown} */ (double))
     /** @type {PropertyDoubleRecord} */
     const record = {target, key, descriptor, owned, implementation: restorable, active: true}
     let targetRecords = activeProperties.get(target)

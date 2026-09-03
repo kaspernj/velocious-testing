@@ -11,6 +11,13 @@ class Constructed {
   constructor(value: string) { this.value = value }
 }
 
+class StaticConstructed {
+  static label = "implementation-only"
+  value: string
+
+  constructor(value: string) { this.value = value }
+}
+
 const callable = scope.fn((value: string, count: number) => ({value, count}))
 const callResult: {value: string, count: number} = callable("value", 1)
 void callResult
@@ -31,9 +38,16 @@ configured.mockImplementation((value: number) => String(value))
 configured.mockReturnValue(123)
 
 const asyncMock = scope.fn(async (value: number) => String(value))
+  .mockResolvedValueOnce("resolved once")
   .mockResolvedValue("resolved")
 // @ts-expect-error Resolve helpers retain the promised result contract.
 asyncMock.mockResolvedValue(123)
+
+// @ts-expect-error Resolved helpers cannot replace a typed synchronous return contract with a Promise.
+scope.fn((value: string) => value).mockResolvedValue("resolved")
+const synchronousOnceMock = scope.fn((value: string) => value)
+// @ts-expect-error One-shot resolved helpers cannot replace a typed synchronous return contract with a Promise.
+const invalidSynchronousResolvedResult: string = synchronousOnceMock.mockResolvedValueOnce("resolved")("value")
 
 const ConstructorDouble = scope.fn(Constructed)
 const constructed: Constructed = new ConstructorDouble("constructed")
@@ -44,10 +58,28 @@ new ConstructorDouble(123)
 // @ts-expect-error The supplied constructor's instance type is preserved.
 const invalidConstructed: string = new ConstructorDouble("constructed")
 
+const StaticConstructorDouble = scope.fn(StaticConstructed)
+const staticConstructed: StaticConstructed = new StaticConstructorDouble("constructed")
+void staticConstructed
+// @ts-expect-error Mock wrappers do not copy implementation static properties.
+StaticConstructorDouble.label
+
+const implementationWithProperty = Object.assign(
+  (value: string) => value.length,
+  {label: "implementation-only"}
+)
+const signatureOnlyMock = scope.fn(implementationWithProperty)
+const signatureOnlyResult: number = signatureOnlyMock("value")
+void signatureOnlyResult
+signatureOnlyMock.mockImplementation((value: string) => value.length)
+// @ts-expect-error Mock wrappers do not copy attached implementation properties.
+signatureOnlyMock.label
+
 const unconfigured = scope.fn()
 unconfigured("callable fallback")
 new unconfigured("constructable fallback")
 unconfigured.mockImplementation((value: string) => value)
+unconfigured.mockResolvedValue("resolved fallback")
 
 const stringSpy = scope.spyOn(stringTarget, "method")
 const stringSpyResult: string = stringSpy("value")
