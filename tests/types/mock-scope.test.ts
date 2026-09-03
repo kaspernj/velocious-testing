@@ -45,6 +45,14 @@ const asyncMock = scope.fn(async (value: number) => String(value))
 // @ts-expect-error Resolve helpers retain the promised result contract.
 asyncMock.mockResolvedValue(123)
 
+declare const mixedImplementation:
+  ((value: string) => string) | ((value: string) => Promise<string>)
+const mixedMock = scope.fn(mixedImplementation)
+// @ts-expect-error Rejected helpers require every union branch to return a Promise.
+mixedMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers require every union branch to return a Promise.
+mixedMock.mockRejectedValueOnce(new Error("rejected once"))
+
 // @ts-expect-error Resolved helpers cannot replace a typed synchronous return contract with a Promise.
 scope.fn((value: string) => value).mockResolvedValue("resolved")
 const synchronousOnceMock = scope.fn((value: string) => value)
