@@ -22,7 +22,7 @@ The default lifecycle runs every reverse-order `afterEach` after setup, body, an
 
 ## Supported globals and Date behavior
 
-`install(target = globalThis)` replaces exactly five own function-valued properties: `Date`, `setTimeout`, `clearTimeout`, `setInterval`, and `clearInterval`. The target must allow each property to be replaced. Installation records each attempted property before replacement, rolls every attempt back if installation fails, and verifies restored descriptors; overlapping active clocks on one target are rejected. If an exotic proxy prevents or obscures rollback, the aggregate error retains the scope's installation state so `restore()` can be retried. `restore()` is idempotent after success, discards every pending timer without running it, attempts and verifies every property restoration, and aggregates restoration failures.
+`install(target = globalThis)` replaces exactly five own function-valued properties: `Date`, `setTimeout`, `clearTimeout`, `setInterval`, and `clearInterval`. The target must allow each property to be replaced. Installation records each attempted property before replacement, rolls every attempt back if installation fails, and verifies restored descriptors; overlapping active clocks on one target are rejected even when the scopes come from compatible physical package copies. If an exotic proxy prevents or obscures rollback, the aggregate error retains the scope's installation state so `restore()` can be retried. `restore()` is idempotent after success, discards every pending timer without running it, attempts and verifies every property restoration, and aggregates restoration failures.
 
 While installed, `Date.now()`, `new Date()` without arguments, and `Date()` observe the fake wall clock. Explicit constructor arguments, `Date.parse`, `Date.UTC`, prototypes, and `instanceof Date` retain the installed target's original Date behavior. `setSystemTime(value)` changes wall time without running timers or changing their remaining delays.
 
@@ -42,6 +42,6 @@ Each advancing operation is limited to 10,000 callbacks. Hitting the limit—for
 
 ## Runner clock separation
 
-Runner lifecycle deadlines, the bounded custom-executor cleanup grace, attempt durations, and event timestamps use real functions captured before public fake timers can install. Deadlines and durations use the captured monotonic `performance.now`; event timestamps use captured real wall time. Advancing or setting a fake clock therefore never advances, pauses, or rewrites runner bookkeeping.
+Runner lifecycle deadlines, the bounded custom-executor cleanup grace, attempt durations, and event timestamps use real functions captured before public fake timers can install. Compatible physical package copies reuse the first validated realm-wide capture, including when a later copy is imported while another copy's fake clock is installed. Deadlines and durations use the captured monotonic `performance.now`; event timestamps use captured real wall time. Advancing or setting a fake clock therefore never advances, pauses, or rewrites runner bookkeeping.
 
 The timer API does not change the context global symbol, protocol major 1, schema 3, declaration records, results, events, runner collaborators, or package export map.

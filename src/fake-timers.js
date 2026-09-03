@@ -1,12 +1,12 @@
 // @ts-check
 
 import {RealDate, realDateNow} from "./real-time.js"
+import {sharedRuntimeState} from "./shared-runtime-state.js"
 
 const CALLBACK_LIMIT = 10_000
 const TIMER_PROPERTIES = /** @type {const} */ (["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"])
 const realDateGetTime = RealDate.prototype.getTime
-/** @type {WeakMap<object, object>} */
-const activeTargets = new WeakMap()
+const activeTargets = sharedRuntimeState.activeTimerTargets
 
 /** @typedef {{now?: number | Date}} FakeTimerOptions */
 /**

@@ -53,6 +53,7 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
         assert.ok(inputPaths.includes("src/mocks.js"))
       }
       assert.ok(inputPaths.includes("src/real-time.js"))
+      assert.ok(inputPaths.includes("src/shared-runtime-state.js"))
       assert.equal(inputPaths.some((input) => input.startsWith("node:")), false)
       assert.doesNotMatch(result.outputFiles[0].text, /\bimport\.meta\b/u)
       for (const inputPath of inputPaths) {
@@ -132,6 +133,100 @@ test("compatible physical package copies share asymmetric matcher identity", asy
     ].join("\n")], {cwd: fixture})
 
     assert.deepEqual(JSON.parse(probe.stdout), {firstSchema: 3, secondSchema: 3})
+  } finally {
+    await rm(fixture, {recursive: true, force: true})
+  }
+})
+
+test("a later physical copy keeps runner deadlines on the shared real clock", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-shared-clock-"))
+  const first = path.join(fixture, "first")
+  const second = path.join(fixture, "second")
+  try {
+    await materializeCandidateSourceCopy(first)
+    await materializeCandidateSourceCopy(second)
+    const probe = await exec("node", ["--input-type=module", "--eval", [
+      "const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);",
+      "const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);",
+      `const first = await import(${JSON.stringify(path.join(first, "src", "index.js"))});`,
+      "const clock = first.createFakeTimers({now: 9000});",
+      "clock.install();",
+      "try {",
+      `  const second = await import(${JSON.stringify(path.join(second, "src", "index.js"))});`,
+      `  const {runTests} = await import(${JSON.stringify(path.join(second, "src", "runner.js"))});`,
+      "  const context = second.createTestContext();",
+      "  const events = [];",
+      "  context.describe(\"late copy\", () => {",
+      "    context.it(\"times out\", {timeoutMs: 10}, () => new Promise(() => {}));",
+      "  });",
+      "  const runPromise = runTests({context, reporter: {onEvent: (event) => events.push(event)}});",
+      "  let safetyTimer;",
+      "  const outcome = await Promise.race([",
+      "    runPromise.then(() => \"runner\"),",
+      "    new Promise((resolve) => { safetyTimer = nativeSetTimeout(() => resolve(\"safety\"), 200) })",
+      "  ]);",
+      "  nativeClearTimeout(safetyTimer);",
+      "  if (outcome === \"safety\") clock.advanceBy(10);",
+      "  const result = await runPromise;",
+      "  console.log(JSON.stringify({",
+      "    outcome,",
+      "    status: result.tests[0].status,",
+      "    message: result.tests[0].error?.message,",
+      "    realTimestamps: events.length > 0 && events.every((event) => event.timestamp !== 9000 && event.timestamp !== 9010)",
+      "  }));",
+      "} finally { clock.restore() }"
+    ].join("\n")], {cwd: fixture, timeout: 2_000})
+
+    assert.deepEqual(JSON.parse(probe.stdout), {
+      outcome: "runner",
+      status: "failed",
+      message: "Timed out after 10ms: late copy times out",
+      realTimestamps: true
+    })
+  } finally {
+    await rm(fixture, {recursive: true, force: true})
+  }
+})
+
+test("physical copies coordinate fake timer ownership and restore exactly", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-shared-timer-owner-"))
+  const first = path.join(fixture, "first")
+  const second = path.join(fixture, "second")
+  try {
+    await materializeCandidateSourceCopy(first)
+    await materializeCandidateSourceCopy(second)
+    const probe = await exec("node", ["--input-type=module", "--eval", [
+      "const properties = [\"Date\", \"setTimeout\", \"clearTimeout\", \"setInterval\", \"clearInterval\"];",
+      "const original = new Map(properties.map((property) => [property, Object.getOwnPropertyDescriptor(globalThis, property)]));",
+      `const first = await import(${JSON.stringify(path.join(first, "src", "index.js"))});`,
+      `const second = await import(${JSON.stringify(path.join(second, "src", "index.js"))});`,
+      "const firstClock = first.createFakeTimers({now: 1000});",
+      "const secondClock = second.createFakeTimers({now: 2000});",
+      "firstClock.install();",
+      "let overlapError;",
+      "try { secondClock.install() } catch (error) { overlapError = error?.message }",
+      "firstClock.restore();",
+      "if (overlapError) {",
+      "  secondClock.install();",
+      "  secondClock.restore();",
+      "} else {",
+      "  secondClock.restore();",
+      "}",
+      "const restored = properties.every((property) => {",
+      "  const actual = Object.getOwnPropertyDescriptor(globalThis, property);",
+      "  const expected = original.get(property);",
+      "  return actual?.value === expected?.value &&",
+      "    actual?.writable === expected?.writable &&",
+      "    actual?.enumerable === expected?.enumerable &&",
+      "    actual?.configurable === expected?.configurable;",
+      "});",
+      "console.log(JSON.stringify({overlapError, restored}));"
+    ].join("\n")], {cwd: fixture})
+
+    assert.deepEqual(JSON.parse(probe.stdout), {
+      overlapError: "Target already has fake timers installed",
+      restored: true
+    })
   } finally {
     await rm(fixture, {recursive: true, force: true})
   }
