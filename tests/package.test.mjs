@@ -42,6 +42,20 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
   }
 })
 
+test("generated mock declarations accept string and symbol keys but reject numeric keys", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/mock-scope.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("packed tarball has explicit exports, resolvable maps, declarations, executable CLI, and works standalone", async () => {
   const artifactDirectory = path.resolve("tmp/package")
   const cacheDirectory = path.resolve("tmp/npm-cache")

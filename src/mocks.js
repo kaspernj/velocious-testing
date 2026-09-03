@@ -29,7 +29,7 @@
 /**
  * @typedef {object} PropertyDoubleRecord
  * @property {object} target
- * @property {PropertyKey} key
+ * @property {string | symbol} key
  * @property {PropertyDescriptor} descriptor
  * @property {boolean} owned
  * @property {RestorableMockFunction} implementation
@@ -37,7 +37,7 @@
  */
 
 const controls = new WeakMap()
-/** @type {WeakMap<object, Map<PropertyKey, PropertyDoubleRecord>>} */
+/** @type {WeakMap<object, Map<string | symbol, PropertyDoubleRecord>>} */
 const activeProperties = new WeakMap()
 
 /** @param {any} implementation @param {string} [label] @returns {asserts implementation is Function} */
@@ -67,6 +67,7 @@ function rejectValue(reason) { return Promise.reject(reason) }
  */
 function createMockFunction(registered, nextInvocationOrder, implementation) {
   if (implementation !== undefined) validateImplementation(implementation)
+  function neutralImplementation() {}
   /** @type {MockState} */
   const state = {calls: [], results: [], instances: [], invocationCallOrder: []}
   /** @type {MockBehavior} */
@@ -82,7 +83,12 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
     try {
       let value
       if (new.target) {
-        value = Reflect.construct(selected || function () {}, args, new.target)
+        const constructor = selected || neutralImplementation
+        if (Object.is(new.target, mockFunction)) {
+          mockFunction.prototype = constructor.prototype && typeof constructor.prototype === "object" ?
+            constructor.prototype : neutralPrototype
+        }
+        value = Reflect.construct(constructor, args, new.target)
         state.instances.push(value)
       } else {
         value = selected ? Reflect.apply(selected, this, args) : undefined
@@ -95,6 +101,7 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
     }
   })
 
+  const neutralPrototype = mockFunction.prototype
   if (implementation?.prototype && typeof implementation.prototype === "object") {
     mockFunction.prototype = implementation.prototype
   }
@@ -107,6 +114,7 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
     clearState(state)
     behavior.implementation = undefined
     behavior.once.length = 0
+    mockFunction.prototype = neutralPrototype
     return mockFunction
   }
   mockFunction.mockImplementation = (next) => {
@@ -135,7 +143,7 @@ export function isMockFunction(value) {
   return typeof value === "function" && controls.has(value)
 }
 
-/** @param {PropertyKey} key @returns {string} */
+/** @param {string | symbol} key @returns {string} */
 function propertyLabel(key) { return typeof key === "symbol" ? String(key) : JSON.stringify(key) }
 
 /** @param {any} target @returns {asserts target is object} */
@@ -145,7 +153,7 @@ function validateTarget(target) {
   }
 }
 
-/** @param {any} key @returns {asserts key is PropertyKey} */
+/** @param {any} key @returns {asserts key is string | symbol} */
 function validatePropertyKey(key) {
   if (typeof key !== "string" && typeof key !== "symbol") {
     throw new TypeError("Mock property key must be a string or symbol")
@@ -154,7 +162,7 @@ function validatePropertyKey(key) {
 
 /**
  * @param {object} target
- * @param {PropertyKey} key
+ * @param {string | symbol} key
  * @returns {{descriptor: PropertyDescriptor, owned: boolean} | undefined}
  */
 function findProperty(target, key) {
@@ -171,8 +179,8 @@ function findProperty(target, key) {
  * Creates an isolated registry for mock functions and property doubles.
  * @returns {{
  *   fn: (implementation?: Function) => MockFunction,
- *   spyOn: (target: object, key: PropertyKey) => RestorableMockFunction,
- *   stub: (target: object, key: PropertyKey, implementation?: Function) => RestorableMockFunction,
+ *   spyOn: (target: object, key: string | symbol) => RestorableMockFunction,
+ *   stub: (target: object, key: string | symbol, implementation?: Function) => RestorableMockFunction,
  *   clearAll: () => void,
  *   resetAll: () => void,
  *   restoreAll: () => void
@@ -205,7 +213,7 @@ export function createMockScope() {
 
   /**
    * @param {object} target
-   * @param {PropertyKey} key
+   * @param {string | symbol} key
    * @param {Function | undefined} implementation
    * @param {boolean} callThrough
    * @returns {RestorableMockFunction}

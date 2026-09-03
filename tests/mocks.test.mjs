@@ -95,6 +95,60 @@ test("constructor calls record successful instances and constructor throws", () 
   assert.deepEqual(Throwing.mock.instances, [])
 })
 
+test("constructor implementations consistently use the selected class prototype and reset to neutral", () => {
+  const scope = testing.createMockScope()
+  class Initial {
+    constructor(name) { this.name = name }
+    description() { return `initial:${this.name}` }
+  }
+  class Persistent {
+    constructor(name) { this.name = name }
+    description() { return `persistent:${this.name}` }
+  }
+  class OneShot {
+    constructor(name) { this.name = name }
+    description() { return `once:${this.name}` }
+  }
+  class Fallback {
+    constructor(name) { this.name = name }
+    description() { return `fallback:${this.name}` }
+  }
+
+  const InitialDouble = scope.fn(Initial)
+  const initial = new InitialDouble("initial")
+  assert.equal(initial instanceof Initial, true)
+  assert.equal(initial instanceof InitialDouble, true)
+  assert.equal(Object.getPrototypeOf(initial), Initial.prototype)
+  assert.equal(initial.description(), "initial:initial")
+
+  const PersistentDouble = scope.fn().mockImplementation(Persistent)
+  const persistent = new PersistentDouble("configured")
+  assert.equal(persistent instanceof Persistent, true)
+  assert.equal(persistent instanceof PersistentDouble, true)
+  assert.equal(Object.getPrototypeOf(persistent), Persistent.prototype)
+  assert.equal(persistent.description(), "persistent:configured")
+
+  const QueuedDouble = scope.fn(Fallback).mockImplementationOnce(OneShot)
+  const once = new QueuedDouble("first")
+  assert.equal(once instanceof OneShot, true)
+  assert.equal(once instanceof QueuedDouble, true)
+  assert.equal(Object.getPrototypeOf(once), OneShot.prototype)
+  assert.equal(once.description(), "once:first")
+  const fallback = new QueuedDouble("second")
+  assert.equal(fallback instanceof Fallback, true)
+  assert.equal(fallback instanceof QueuedDouble, true)
+  assert.equal(Object.getPrototypeOf(fallback), Fallback.prototype)
+  assert.equal(fallback.description(), "fallback:second")
+
+  InitialDouble.mockReset()
+  assert.notEqual(InitialDouble.prototype, Initial.prototype)
+  const neutral = new InitialDouble("ignored")
+  assert.equal(neutral instanceof Initial, false)
+  assert.equal(neutral instanceof InitialDouble, true)
+  assert.equal(Object.getPrototypeOf(neutral), InitialDouble.prototype)
+  assert.equal("description" in neutral, false)
+})
+
 test("clear preserves behavior and stable history arrays while reset removes all behavior", () => {
   const scope = testing.createMockScope()
   const implementation = scope.fn((value) => `persistent:${value}`)
