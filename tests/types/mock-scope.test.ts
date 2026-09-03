@@ -55,10 +55,24 @@ synchronousOnceMock.mockRejectedValue(new Error("rejected"))
 // @ts-expect-error One-shot rejected helpers cannot replace a typed synchronous return contract with a Promise.
 synchronousOnceMock.mockRejectedValueOnce(new Error("rejected once"))
 
+const alwaysThrowingMock = scope.fn(() => { throw new Error("always throws") })
+// @ts-expect-error Rejected helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockRejectedValueOnce(new Error("rejected once"))
+
+const neverPromiseMock = scope.fn((): Promise<never> => Promise.reject(new Error("always rejects")))
+neverPromiseMock.mockRejectedValue(new Error("rejected"))
+  .mockRejectedValueOnce(new Error("rejected once"))
+
 const ConstructorDouble = scope.fn(Constructed)
 const constructed: Constructed = new ConstructorDouble("constructed")
 void constructed
 ConstructorDouble.mockImplementation(Constructed).mockImplementationOnce(Constructed)
+// @ts-expect-error Rejected helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockRejectedValueOnce(new Error("rejected once"))
 ConstructorDouble.mockReturnValue(new Constructed("returned"))
   .mockReturnValueOnce(new Constructed("returned once"))
 // @ts-expect-error Return helpers retain the supplied constructor's instance contract.

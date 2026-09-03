@@ -49,8 +49,10 @@
  *   mockReturnValueOnce: (value: MockReturnValue<T>) => MockFunction<T>,
  *   mockResolvedValue: (value: MockResolvedValue<T>) => MockFunction<T>,
  *   mockResolvedValueOnce: (value: MockResolvedValue<T>) => MockFunction<T>,
- *   mockRejectedValue: (reason: T extends (...args: any[]) => PromiseLike<any> ? any : never) => MockFunction<T>,
- *   mockRejectedValueOnce: (reason: T extends (...args: any[]) => PromiseLike<any> ? any : never) => MockFunction<T>
+ *   mockRejectedValue: (reason: T extends (...args: any[]) => infer Result ?
+ *     [Result] extends [never] ? never : [Result] extends [PromiseLike<any>] ? any : never : never) => MockFunction<T>,
+ *   mockRejectedValueOnce: (reason: T extends (...args: any[]) => infer Result ?
+ *     [Result] extends [never] ? never : [Result] extends [PromiseLike<any>] ? any : never : never) => MockFunction<T>
  * }} MockFunction<T>
  */
 /**
