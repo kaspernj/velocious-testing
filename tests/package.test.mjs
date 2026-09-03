@@ -111,6 +111,45 @@ test("baseline and advanced-matcher package copies reject mixed context schemas 
   }
 })
 
+test("expect.extend reserves constructor fields atomically without poisoning new expectations", async () => {
+  for (const reservedName of ["value", "negated", "changes", "settlement"]) {
+    const probe = await exec("node", ["--input-type=module", "--eval", [
+      `const {expect} = await import(${JSON.stringify(path.resolve("src/index.js"))});`,
+      `const reservedName = ${JSON.stringify(reservedName)};`,
+      "const definitions = {",
+      "  toRemainUnregisteredAfterConflict() { return {pass: true, message: \"unused\"} },",
+      "  [reservedName]() { return {pass: true, message: \"unused\"} }",
+      "};",
+      "let extendError;",
+      "try { expect.extend(definitions) } catch (error) { extendError = error?.message }",
+      "let ordinaryOk = false;",
+      "try {",
+      "  const ordinary = expect(1);",
+      "  ordinaryOk = ordinary.value === 1 && ordinary.negated === false && Array.isArray(ordinary.changes) && ordinary.changes.length === 0;",
+      "} catch {}",
+      "let promiseOk = false;",
+      "try {",
+      "  const promise = Promise.resolve(1);",
+      "  const promised = expect(promise).resolves;",
+      "  promiseOk = promised.value === promise && promised.negated === false && promised.settlement === \"resolves\";",
+      "} catch {}",
+      "console.log(JSON.stringify({",
+      "  extendError,",
+      "  ordinaryOk,",
+      "  promiseOk,",
+      "  companionType: typeof expect(1).toRemainUnregisteredAfterConflict",
+      "}));"
+    ].join("\n")], {cwd: process.cwd()})
+
+    assert.deepEqual(JSON.parse(probe.stdout), {
+      extendError: `Custom matcher ${JSON.stringify(reservedName)} conflicts with an existing matcher`,
+      ordinaryOk: true,
+      promiseOk: true,
+      companionType: "undefined"
+    })
+  }
+})
+
 test("generated mock declarations accept string and symbol keys but reject numeric keys", async () => {
   await exec(path.resolve("node_modules/.bin/tsc"), [
     "--ignoreConfig",

@@ -29,7 +29,7 @@ expect(response).toEqual({
 })
 ```
 
-`anything()` matches every value except `null` and `undefined`. `any(Constructor)` recognizes the primitive constructors and otherwise uses `instanceof`. `stringContaining(string)` requires a string fragment. `stringMatching(stringOrRegExp)` accepts a pattern string or regular expression and never changes a caller-owned expression's `lastIndex`. All six factories are also named root exports.
+`anything()` matches every value except `null` and `undefined`. `any(Constructor)` recognizes the primitive constructors and otherwise uses `instanceof`. `stringContaining(string)` requires a string fragment. `stringMatching(stringOrRegExp)` accepts a pattern string or regular expression and never changes a caller-owned expression's `lastIndex`. `arrayContaining(array)` requires a dense array; an explicit `undefined` element remains valid. All six factories are also named root exports.
 
 ## Custom matchers
 

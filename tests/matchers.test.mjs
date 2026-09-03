@@ -100,6 +100,18 @@ test("asymmetric matcher factories validate inputs and preserve regular expressi
   expect("Ada Lovelace").toEqual(stringMatching(expression))
   assert.equal(expression.lastIndex, 3)
   assert.throws(() => anyValue(null), {message: "any() requires a constructor function"})
+  const sparse = new Array(1)
+  assert.throws(() => arrayContaining(sparse), {
+    name: "TypeError",
+    message: "arrayContaining() requires a dense array"
+  })
+  const partiallySparse = [undefined, 1]
+  delete partiallySparse[0]
+  assert.throws(() => arrayContaining(partiallySparse), {
+    name: "TypeError",
+    message: "arrayContaining() requires a dense array"
+  })
+  expect([undefined]).toEqual(arrayContaining([undefined]))
   assert.throws(() => stringContaining(1), {message: "stringContaining() requires a string"})
   assert.throws(() => stringMatching({}), {message: "stringMatching() requires a string or RegExp"})
 })

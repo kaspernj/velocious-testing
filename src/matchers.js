@@ -22,6 +22,7 @@ import {
 
 /** @type {Map<string, CustomMatcher>} */
 const customMatchers = new Map()
+const reservedMatcherNames = new Set(["value", "negated", "changes", "settlement"])
 
 /** @param {any} value @returns {ContainingMatcher} */
 export function objectContaining(value) {
@@ -34,6 +35,9 @@ export function objectContaining(value) {
 /** @param {any[]} value @returns {ContainingMatcher} */
 export function arrayContaining(value) {
   if (!Array.isArray(value)) throw new Error(`Expected array but got ${typeof value}`)
+  for (let index = 0; index < value.length; index += 1) {
+    if (!Object.hasOwn(value, index)) throw new TypeError("arrayContaining() requires a dense array")
+  }
   return /** @type {ContainingMatcher} */ (createAsymmetricMatcher("arrayContaining", value))
 }
 
@@ -546,7 +550,7 @@ function extend(definitions) {
   for (const name of names) {
     if (name.length === 0) throw new TypeError("Custom matcher names must not be empty")
     if (customMatchers.has(name)) throw new TypeError(`Custom matcher ${JSON.stringify(name)} is already registered`)
-    if (name in Expect.prototype || name in PromiseExpectation.prototype) {
+    if (reservedMatcherNames.has(name) || name in Expect.prototype || name in PromiseExpectation.prototype) {
       throw new TypeError(`Custom matcher ${JSON.stringify(name)} conflicts with an existing matcher`)
     }
     const descriptor = Object.getOwnPropertyDescriptor(definitions, name)
