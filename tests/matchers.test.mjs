@@ -42,6 +42,23 @@ test("containing matchers compose and preserve duplicate requirements", () => {
   )
 })
 
+test("asymmetric containment tracks cycles through recursive matcher patterns", () => {
+  const actualObject = {}
+  actualObject.self = actualObject
+  const expectedObject = {}
+  const objectMatcher = objectContaining(expectedObject)
+  expectedObject.self = objectMatcher
+
+  const actualArray = []
+  actualArray.push(actualArray)
+  const expectedArray = []
+  const arrayMatcher = arrayContaining(expectedArray)
+  expectedArray.push(arrayMatcher)
+
+  expect(actualObject).toEqual(objectMatcher)
+  expect(actualArray).toEqual(arrayMatcher)
+})
+
 test("asymmetric matchers compose through equality, containment, sets, and mock calls", () => {
   const scope = createMockScope()
   const implementation = scope.fn()
@@ -338,6 +355,35 @@ test("custom matchers support asynchronous results and promise chains", async ()
   await assert.rejects(expect(Promise.resolve(3)).resolves.toBeEvenEventually(), {
     message: "Expected 3 to be even"
   })
+})
+
+test("custom matchers assimilate one-shot thenable results without rereading then", async () => {
+  let reads = 0
+  let calls = 0
+  let receiver
+  const result = {
+    get then() {
+      reads += 1
+      if (reads > 1) throw new Error("custom matcher then accessor was read more than once")
+      return function (resolve) {
+        calls += 1
+        receiver = this
+        queueMicrotask(() => resolve({pass: true, message: "unused"}))
+      }
+    }
+  }
+
+  expect.extend({
+    toReturnOneShotThenable() { return /** @type {any} */ (result) }
+  })
+
+  const assertion = expect("value").toReturnOneShotThenable()
+  assert.equal(reads, 1)
+  assert.equal(calls, 0)
+  await assertion
+  assert.equal(reads, 1)
+  assert.equal(calls, 1)
+  assert.equal(receiver, result)
 })
 
 test("expect.extend validates definitions and results atomically with stable errors", async () => {

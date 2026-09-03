@@ -111,7 +111,11 @@ function matchesAsymmetric(actual, expected, pairs) {
 
 /** @param {any} actual @param {any} expected @param {[any, any][]} pairs @returns {boolean} */
 function matchesInternal(actual, expected, pairs) {
-  if (isAsymmetricMatcher(expected)) return matchesAsymmetric(actual, expected, pairs)
+  if (isAsymmetricMatcher(expected)) {
+    const recursive = expected.__velociousMatcher === "objectContaining" || expected.__velociousMatcher === "arrayContaining"
+    if (recursive && markPair(pairs, actual, expected)) return true
+    return matchesAsymmetric(actual, expected, pairs)
+  }
   if (Object.is(actual, expected)) return true
   if (actual instanceof Date && expected instanceof Date) return actual.getTime() === expected.getTime()
   if (actual instanceof RegExp && expected instanceof RegExp) {

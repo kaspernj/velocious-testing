@@ -29,7 +29,7 @@ expect(response).toEqual({
 })
 ```
 
-`anything()` matches every value except `null` and `undefined`. `any(Constructor)` recognizes the primitive constructors and otherwise uses `instanceof`. `stringContaining(string)` requires a string fragment. `stringMatching(stringOrRegExp)` accepts a pattern string or regular expression and never changes a caller-owned expression's `lastIndex`. `arrayContaining(array)` requires a dense array; an explicit `undefined` element remains valid. All six factories are also named root exports.
+`anything()` matches every value except `null` and `undefined`. `any(Constructor)` recognizes the primitive constructors and otherwise uses `instanceof`. `stringContaining(string)` requires a string fragment. `stringMatching(stringOrRegExp)` accepts a pattern string or regular expression and never changes a caller-owned expression's `lastIndex`. `arrayContaining(array)` requires a dense array; an explicit `undefined` element remains valid. Recursive `objectContaining` and `arrayContaining` patterns track cycles instead of recursing indefinitely. All six factories are also named root exports.
 
 ## Custom matchers
 
@@ -46,7 +46,7 @@ expect.extend({
 })
 ```
 
-A matcher receives the tested value followed by its arguments and returns `{pass: boolean, message: string | () => string}`, synchronously or through a promise. Its frozen context contains only `isNot`, `equals(actual, expected)`, `format(value)`, and `diff(actual, expected)`. Thrown and rejected values propagate unchanged. Names cannot replace built-in or previously registered matchers; definitions are fully validated before any name is installed. Result validation is deterministic, and lazy messages are evaluated only when the assertion fails.
+A matcher receives the tested value followed by its arguments and returns `{pass: boolean, message: string | () => string}`, synchronously or through a promise. Thenable results have their callable `then` read once and invoked asynchronously with the original receiver. Its frozen context contains only `isNot`, `equals(actual, expected)`, `format(value)`, and `diff(actual, expected)`. Thrown and rejected values propagate unchanged. Names cannot replace built-in or previously registered matchers; definitions are fully validated before any name is installed. Result validation is deterministic, and lazy messages are evaluated only when the assertion fails.
 
 Custom matchers work with `.not`, `.resolves`, and `.rejects`. TypeScript callers declare their chosen names through module augmentation while runtime registration remains explicit:
 
