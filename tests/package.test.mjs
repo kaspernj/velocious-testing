@@ -111,6 +111,30 @@ test("baseline and advanced-matcher package copies reject mixed context schemas 
   }
 })
 
+test("compatible physical package copies share asymmetric matcher identity", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-compatible-copies-"))
+  const first = path.join(fixture, "first")
+  const second = path.join(fixture, "second")
+  try {
+    await materializeCandidateSourceCopy(first)
+    await materializeCandidateSourceCopy(second)
+    const probe = await exec("node", ["--input-type=module", "--eval", [
+      `const first = await import(${JSON.stringify(path.join(first, "src", "index.js"))});`,
+      `const second = await import(${JSON.stringify(path.join(second, "src", "index.js"))});`,
+      "second.expect({id: 7, tags: [\"admin\"]}).toEqual(first.objectContaining({",
+      "  id: first.any(Number),",
+      "  tags: first.arrayContaining([first.stringContaining(\"min\")])",
+      "}));",
+      "first.expect(\"Grace Hopper\").toEqual(second.stringMatching(/Hopper$/u));",
+      "console.log(JSON.stringify({firstSchema: first.CONTEXT_SCHEMA_VERSION, secondSchema: second.CONTEXT_SCHEMA_VERSION}));"
+    ].join("\n")], {cwd: fixture})
+
+    assert.deepEqual(JSON.parse(probe.stdout), {firstSchema: 3, secondSchema: 3})
+  } finally {
+    await rm(fixture, {recursive: true, force: true})
+  }
+})
+
 test("expect.extend reserves constructor fields atomically without poisoning new expectations", async () => {
   for (const reservedName of ["value", "negated", "changes", "settlement"]) {
     const probe = await exec("node", ["--input-type=module", "--eval", [

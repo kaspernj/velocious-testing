@@ -12,7 +12,7 @@ await expect(Promise.reject(new TypeError("failed"))).rejects.toThrow(TypeError)
 await expect(Promise.resolve("ready")).resolves.not.toEqual("waiting")
 ```
 
-`resolves` fails if the promise rejects, and `rejects` fails if it fulfills; `.not` negates only the matcher after the required settlement. Rejection reasons retain their JavaScript identity, including `undefined`, `null`, `false`, `0`, and the empty string. Promise assertions require an object or function with a callable `then` property and otherwise throw `Promise assertions require a promise-like received value`.
+`resolves` fails if the promise rejects, and `rejects` fails if it fulfills; `.not` negates only the matcher after the required settlement. Rejection reasons retain their JavaScript identity, including `undefined`, `null`, `false`, `0`, and the empty string. Promise assertions require an object or function with a callable `then` property and otherwise throw `Promise assertions require a promise-like received value`. A promise chain reads that property once, preserves the thenable receiver, and assimilates its settlement asynchronously.
 
 The runner already awaits a promise returned by a test callback, so `it("works", () => expect(operation()).resolves.toEqual(value))` participates in ordinary timeout, retry, cleanup, and reporting behavior. An assertion promise that is neither returned nor awaited cannot be observed by the runner.
 

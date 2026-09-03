@@ -23,6 +23,34 @@ import {
 /** @type {Map<string, CustomMatcher>} */
 const customMatchers = new Map()
 const reservedMatcherNames = new Set(["value", "negated", "changes", "settlement"])
+/** @type {WeakMap<object, {value: any, then: Function, promise?: Promise<any>}>} */
+const promiseValueStates = new WeakMap()
+
+/** @param {any} value @param {Function} then @returns {Promise<any>} */
+function assimilatePromiseValue(value, then) {
+  return new Promise((resolve, reject) => {
+    Promise.resolve().then(() => {
+      try { Reflect.apply(then, value, [resolve, reject]) } catch (error) { reject(error) }
+    })
+  })
+}
+
+/** @param {PromiseExpectation} expectation @returns {Promise<any>} */
+function promiseValue(expectation) {
+  const state = /** @type {{value: any, then: Function, promise?: Promise<any>}} */ (promiseValueStates.get(expectation))
+  if (!state.promise) state.promise = assimilatePromiseValue(state.value, state.then)
+  return state.promise
+}
+
+/** @param {PromiseExpectation} source @param {boolean} negated @returns {PromiseExpectation} */
+function copyPromiseExpectation(source, negated) {
+  const expectation = Object.create(PromiseExpectation.prototype)
+  expectation.value = source.value
+  expectation.settlement = source.settlement
+  expectation.negated = negated
+  promiseValueStates.set(expectation, /** @type {{value: any, then: Function, promise?: Promise<any>}} */ (promiseValueStates.get(source)))
+  return expectation
+}
 
 /** @param {any} value @returns {ContainingMatcher} */
 export function objectContaining(value) {
@@ -149,20 +177,23 @@ class ChangeExpectation {
 export class PromiseExpectation {
   /** @param {any} value @param {"resolves" | "rejects"} settlement @param {boolean} [negated] */
   constructor(value, settlement, negated = false) {
-    if ((typeof value !== "object" && typeof value !== "function") || value === null || typeof value.then !== "function") {
+    if ((typeof value !== "object" && typeof value !== "function") || value === null) {
       throw new TypeError("Promise assertions require a promise-like received value")
     }
+    const then = value.then
+    if (typeof then !== "function") throw new TypeError("Promise assertions require a promise-like received value")
     this.value = value
     this.settlement = settlement
     this.negated = negated
+    promiseValueStates.set(this, {value, then})
   }
 
   /** @returns {PromiseExpectation} */
-  get not() { return new PromiseExpectation(this.value, this.settlement, !this.negated) }
+  get not() { return copyPromiseExpectation(this, !this.negated) }
 
   /** @private @param {string} name @param {any[]} args @returns {Promise<void>} */
   async invoke(name, args) {
-    const outcome = await Promise.resolve(this.value).then(
+    const outcome = await promiseValue(this).then(
       (value) => ({status: "fulfilled", value}),
       (value) => ({status: "rejected", value})
     )

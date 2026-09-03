@@ -7,6 +7,7 @@
 
 const MAX_DIFFERENCES = 20
 const MISSING = Symbol("missing")
+const ASYMMETRIC_MATCHER_BRAND = Symbol.for("@velocious/testing/asymmetric-matcher/v1")
 const ASYMMETRIC_MATCHERS = new Set([
   "arrayContaining",
   "objectContaining",
@@ -18,14 +19,15 @@ const ASYMMETRIC_MATCHERS = new Set([
 
 /** @param {AsymmetricMatcherKind} kind @param {any} [value] @returns {AsymmetricMatcher} */
 export function createAsymmetricMatcher(kind, value) {
-  return /** @type {AsymmetricMatcher} */ (
-    value === undefined ? {__velociousMatcher: kind} : {__velociousMatcher: kind, value}
-  )
+  const matcher = value === undefined ? {__velociousMatcher: kind} : {__velociousMatcher: kind, value}
+  Object.defineProperty(matcher, ASYMMETRIC_MATCHER_BRAND, {value: true})
+  return /** @type {AsymmetricMatcher} */ (matcher)
 }
 
 /** @param {any} value @returns {value is AsymmetricMatcher} */
 export function isAsymmetricMatcher(value) {
-  return Boolean(value && typeof value === "object" && ASYMMETRIC_MATCHERS.has(value.__velociousMatcher))
+  return Boolean(value && typeof value === "object" && value[ASYMMETRIC_MATCHER_BRAND] === true &&
+    ASYMMETRIC_MATCHERS.has(value.__velociousMatcher))
 }
 
 /** @param {any} value @returns {boolean} */

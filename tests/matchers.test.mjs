@@ -69,6 +69,19 @@ test("asymmetric matchers compose through equality, containment, sets, and mock 
   }))
 })
 
+test("ordinary objects cannot forge asymmetric matchers with string fields", () => {
+  const payload = {__velociousMatcher: "anything"}
+
+  expect(payload).toEqual({__velociousMatcher: "anything"})
+  assert.throws(() => expect(7).toEqual(payload), {
+    message: [
+      '7 wasn\'t equal to {"__velociousMatcher":"anything"}',
+      "Diff:",
+      '  $: expected {"__velociousMatcher": "anything"}, received 7'
+    ].join("\n")
+  })
+})
+
 test("unordered asymmetric matching uses bounded work and can reassign earlier matches", () => {
   expect([1, 2]).toEqual(arrayContaining([anything(), 1]))
   expect(new Set([1, 2])).toEqual(new Set([anything(), 1]))
@@ -231,6 +244,44 @@ test("promise chains report wrong settlement and non-promise values deterministi
     name: "TypeError",
     message: "Promise assertions require a promise-like received value"
   })
+})
+
+test("promise chains read one-shot then accessors once and assimilate with standard behavior", async () => {
+  /** @param {"fulfill" | "reject" | "throw"} behavior @param {any} value */
+  function oneShotThenable(behavior, value) {
+    let reads = 0
+    let calls = 0
+    let receiver
+    const thenable = {
+      get then() {
+        reads += 1
+        if (reads > 1) throw new Error("then accessor was read more than once")
+        return function (resolve, reject) {
+          calls += 1
+          receiver = this
+          if (behavior === "throw") throw value
+          queueMicrotask(() => behavior === "fulfill" ? resolve(value) : reject(value))
+        }
+      }
+    }
+    return {thenable, state: () => ({reads, calls, receiver})}
+  }
+
+  const fulfilled = oneShotThenable("fulfill", "ready")
+  const fulfilledAssertion = expect(fulfilled.thenable).resolves.not.toEqual("waiting")
+  assert.deepEqual(fulfilled.state(), {reads: 1, calls: 0, receiver: undefined})
+  await fulfilledAssertion
+  assert.deepEqual(fulfilled.state(), {reads: 1, calls: 1, receiver: fulfilled.thenable})
+
+  const rejected = oneShotThenable("reject", false)
+  const rejectedAssertion = expect(rejected.thenable).rejects.toEqual(false)
+  assert.deepEqual(rejected.state(), {reads: 1, calls: 0, receiver: undefined})
+  await rejectedAssertion
+  assert.deepEqual(rejected.state(), {reads: 1, calls: 1, receiver: rejected.thenable})
+
+  const thrown = oneShotThenable("throw", 0)
+  await expect(thrown.thenable).rejects.toEqual(0)
+  assert.deepEqual(thrown.state(), {reads: 1, calls: 1, receiver: thrown.thenable})
 })
 
 test("rejects preserves falsy reasons and supports throw matching", async () => {
