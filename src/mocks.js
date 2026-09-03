@@ -1,6 +1,19 @@
 // @ts-check
 
 /** @typedef {{type: "return" | "throw", value: any}} MockResult */
+/** @typedef {((...args: any[]) => any) & (new (...args: any[]) => any)} AnyMockImplementation */
+/**
+ * @template {Function} T
+ * @typedef {T extends (...args: any[]) => infer Result ? Result : any} MockReturnValue
+ */
+/**
+ * @template {Function} T
+ * @typedef {T extends AnyMockImplementation ? AnyMockImplementation extends T ? Function : T : T} MockImplementation
+ */
+/**
+ * @template {Function} T
+ * @typedef {T extends (...args: any[]) => PromiseLike<infer Value> ? Value : any} MockResolvedValue
+ */
 /**
  * @typedef {object} MockState
  * @property {any[][]} calls
@@ -9,19 +22,20 @@
  * @property {number[]} invocationCallOrder
  */
 /**
- * @typedef {((...args: any[]) => any) & (new (...args: any[]) => any) & {
+ * @template {Function} [T=AnyMockImplementation]
+ * @typedef {T & {
  *   mock: MockState,
- *   mockClear: () => MockFunction,
- *   mockReset: () => MockFunction,
- *   mockImplementation: (implementation: Function) => MockFunction,
- *   mockImplementationOnce: (implementation: Function) => MockFunction,
- *   mockReturnValue: (value: any) => MockFunction,
- *   mockReturnValueOnce: (value: any) => MockFunction,
- *   mockResolvedValue: (value: any) => MockFunction,
- *   mockResolvedValueOnce: (value: any) => MockFunction,
- *   mockRejectedValue: (reason: any) => MockFunction,
- *   mockRejectedValueOnce: (reason: any) => MockFunction
- * }} MockFunction
+ *   mockClear: () => MockFunction<T>,
+ *   mockReset: () => MockFunction<T>,
+ *   mockImplementation: (implementation: MockImplementation<T>) => MockFunction<T>,
+ *   mockImplementationOnce: (implementation: MockImplementation<T>) => MockFunction<T>,
+ *   mockReturnValue: (value: MockReturnValue<T>) => MockFunction<T>,
+ *   mockReturnValueOnce: (value: MockReturnValue<T>) => MockFunction<T>,
+ *   mockResolvedValue: (value: MockResolvedValue<T>) => MockFunction<T>,
+ *   mockResolvedValueOnce: (value: MockResolvedValue<T>) => MockFunction<T>,
+ *   mockRejectedValue: (reason: any) => MockFunction<T>,
+ *   mockRejectedValueOnce: (reason: any) => MockFunction<T>
+ * }} MockFunction<T>
  */
 /** @typedef {MockFunction & {mockRestore: () => MockFunction}} RestorableMockFunction */
 /** @typedef {{implementation: Function | undefined, once: Function[]}} MockBehavior */
@@ -60,10 +74,10 @@ function resolveValue(value) { return Promise.resolve(value) }
 function rejectValue(reason) { return Promise.reject(reason) }
 
 /**
- * @param {Set<MockFunction>} registered
+ * @param {Set<MockFunction<any>>} registered
  * @param {() => number} nextInvocationOrder
  * @param {Function | undefined} implementation
- * @returns {MockFunction}
+ * @returns {MockFunction<Function>}
  */
 function createMockFunction(registered, nextInvocationOrder, implementation) {
   if (implementation !== undefined) validateImplementation(implementation)
@@ -74,7 +88,7 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
   /** @type {MockBehavior} */
   const behavior = {implementation, once: []}
 
-  /** @type {MockFunction} */
+  /** @type {MockFunction<Function>} */
   const mockFunction = /** @type {any} */ (/** @this {any} @param {...any} args */ function (...args) {
     const callIndex = state.calls.length
     state.calls.push(args)
@@ -184,24 +198,29 @@ function findProperty(target, key) {
   return undefined
 }
 
-/**
- * Creates an isolated registry for mock functions and property doubles.
- * @returns {{
- *   fn: (implementation?: Function) => MockFunction,
- *   spyOn: (target: object, key: string | symbol) => RestorableMockFunction,
- *   stub: (target: object, key: string | symbol, implementation?: Function) => RestorableMockFunction,
- *   clearAll: () => void,
- *   resetAll: () => void,
- *   restoreAll: () => void
- * }}
- */
+/** Creates an isolated registry for mock functions and property doubles. */
 export function createMockScope() {
-  /** @type {Set<MockFunction>} */
+  /** @type {Set<MockFunction<any>>} */
   const registered = new Set()
   /** @type {PropertyDoubleRecord[]} */
   const propertyRecords = []
   let invocationOrder = 0
   const nextInvocationOrder = () => { invocationOrder += 1; return invocationOrder }
+
+  /**
+   * @template {Function} T
+   * @overload
+   * @param {T} implementation
+   * @returns {MockFunction<T>}
+   */
+  /**
+   * @overload
+   * @returns {MockFunction}
+   */
+  /** @param {Function} [implementation] */
+  function fn(implementation) {
+    return createMockFunction(registered, nextInvocationOrder, implementation)
+  }
 
   /** @param {PropertyDoubleRecord} record @returns {MockFunction} */
   const restore = (record) => {
@@ -262,7 +281,7 @@ export function createMockScope() {
       registered.delete(double)
       throw error
     }
-    const restorable = /** @type {RestorableMockFunction} */ (double)
+    const restorable = /** @type {RestorableMockFunction} */ (/** @type {unknown} */ (double))
     /** @type {PropertyDoubleRecord} */
     const record = {target, key, descriptor, owned, implementation: restorable, active: true}
     let targetRecords = activeProperties.get(target)
@@ -277,9 +296,13 @@ export function createMockScope() {
   }
 
   return {
-    fn: (implementation) => createMockFunction(registered, nextInvocationOrder, implementation),
-    spyOn: (target, key) => replaceProperty(target, key, undefined, true),
-    stub: (target, key, implementation) => replaceProperty(target, key, implementation, false),
+    fn,
+    spyOn: /** @type {(target: object, key: string | symbol) => RestorableMockFunction} */ (
+      (target, key) => replaceProperty(target, key, undefined, true)
+    ),
+    stub: /** @type {(target: object, key: string | symbol, implementation?: Function) => RestorableMockFunction} */ (
+      (target, key, implementation) => replaceProperty(target, key, implementation, false)
+    ),
     clearAll() { for (const implementation of registered) implementation.mockClear() },
     resetAll() { for (const implementation of registered) implementation.mockReset() },
     restoreAll() {
