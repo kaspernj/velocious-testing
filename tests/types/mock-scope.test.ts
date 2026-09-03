@@ -28,6 +28,15 @@ class StaticConstructed {
   constructor(value: string) { this.value = value }
 }
 
+interface HybridInstance {
+  value: number
+}
+
+declare const typedHybridImplementation: {
+  (value: string): string
+  new(value: number): HybridInstance
+}
+
 const callable = scope.fn((value: string, count: number) => ({value, count}))
 const callResult: {value: string, count: number} = callable("value", 1)
 void callResult
@@ -54,6 +63,50 @@ const asyncMock = scope.fn(async (value: number) => String(value))
   .mockRejectedValue(new Error("rejected"))
 // @ts-expect-error Resolve helpers retain the promised result contract.
 asyncMock.mockResolvedValue(123)
+
+declare const allAsyncOverloadImplementation: {
+  (value: string): Promise<string>
+  (value: number): Promise<string>
+}
+const allAsyncOverloadMock = scope.fn(allAsyncOverloadImplementation)
+const allAsyncStringResult: Promise<string> = allAsyncOverloadMock("value")
+const allAsyncNumberResult: Promise<string> = allAsyncOverloadMock(1)
+void allAsyncStringResult
+void allAsyncNumberResult
+// @ts-expect-error Async overload mocks retain both overload argument contracts.
+allAsyncOverloadMock(true)
+// @ts-expect-error Async overload mocks retain their shared Promise result contract.
+const invalidAllAsyncResult: Promise<number> = allAsyncOverloadMock("value")
+allAsyncOverloadMock.mockResolvedValue("resolved")
+allAsyncOverloadMock.mockResolvedValueOnce("resolved once")
+allAsyncOverloadMock.mockRejectedValue(new Error("rejected"))
+allAsyncOverloadMock.mockRejectedValueOnce(new Error("rejected once"))
+// @ts-expect-error Async overload resolved helpers retain the shared resolved type.
+allAsyncOverloadMock.mockResolvedValue(1)
+// @ts-expect-error One-shot async overload resolved helpers retain the shared resolved type.
+allAsyncOverloadMock.mockResolvedValueOnce(1)
+
+const typedHybridMock = scope.fn(typedHybridImplementation)
+const typedHybridCallResult: string = typedHybridMock("value")
+const typedHybridConstructResult: HybridInstance = new typedHybridMock(1)
+void typedHybridCallResult
+void typedHybridConstructResult
+// @ts-expect-error Typed hybrid mocks preserve their call arguments.
+typedHybridMock(1)
+// @ts-expect-error Typed hybrid mocks preserve their constructor arguments.
+new typedHybridMock("value")
+// @ts-expect-error Typed hybrid mocks preserve their call result.
+const invalidTypedHybridCallResult: number = typedHybridMock("value")
+// @ts-expect-error Typed hybrid mocks preserve their constructed instance.
+const invalidTypedHybridConstructResult: string = new typedHybridMock(1)
+// @ts-expect-error Synchronous typed hybrids cannot use resolved helpers.
+typedHybridMock.mockResolvedValue("resolved")
+// @ts-expect-error Synchronous typed hybrids cannot use one-shot resolved helpers.
+typedHybridMock.mockResolvedValueOnce("resolved once")
+// @ts-expect-error Synchronous typed hybrids cannot use rejected helpers.
+typedHybridMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error Synchronous typed hybrids cannot use one-shot rejected helpers.
+typedHybridMock.mockRejectedValueOnce(new Error("rejected once"))
 
 declare const mixedImplementation:
   ((value: string) => string) | ((value: string) => Promise<string>)

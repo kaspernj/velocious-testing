@@ -4,8 +4,18 @@
 /** @typedef {((...args: any[]) => any) & (new (...args: any[]) => any)} AnyMockImplementation */
 /**
  * @template {Function} T
- * @typedef {T extends (this: infer This, ...args: infer Args) => infer Result ?
- *   (this: This, ...args: Args) => Result : unknown} MockCallSignature<T>
+ * @typedef {T extends {
+ *   (this: infer This1, ...args: infer Args1): infer Result1;
+ *   (this: infer This2, ...args: infer Args2): infer Result2;
+ *   (this: infer This3, ...args: infer Args3): infer Result3;
+ *   (this: infer This4, ...args: infer Args4): infer Result4;
+ *   (this: infer This5, ...args: infer Args5): infer Result5;
+ * } ?
+ *   ((this: This1, ...args: Args1) => Result1) &
+ *   ((this: This2, ...args: Args2) => Result2) &
+ *   ((this: This3, ...args: Args3) => Result3) &
+ *   ((this: This4, ...args: Args4) => Result4) &
+ *   ((this: This5, ...args: Args5) => Result5) : unknown} MockCallSignature<T>
  */
 /**
  * @template {Function} T
@@ -28,9 +38,30 @@
  */
 /**
  * @template {Function} T
- * @typedef {[T] extends [AnyMockImplementation] ? any :
- *   [T] extends [(this: infer This, ...args: infer Args) => infer Result] ?
- *   [Pick<T, keyof T> & ((this: This, ...args: Args) => Result)] extends [T] ? Result : never : never}
+ * @typedef {[T] extends [(this: infer This, ...args: any[]) => infer Result] ?
+ *   [Pick<T, keyof T> & ((this: This, ...args: any[]) => Result)] extends [T] ? Result : never : never}
+ *   MockNarrowCallResult
+ */
+/** @template T @typedef {0 extends (1 & T) ? true : false} MockIsAny */
+/**
+ * @template {Function} T
+ * @typedef {T extends (...args: infer Args) => infer Result ?
+ *   any[] extends Args ? MockIsAny<Result> : false : false} MockHasBroadCallSignature
+ */
+/**
+ * @template {Function} T
+ * @typedef {T extends new (...args: infer Args) => infer Instance ?
+ *   any[] extends Args ? MockIsAny<Instance> : false : false} MockHasBroadConstructSignature
+ */
+/**
+ * @template {Function} T
+ * @typedef {T extends AnyMockImplementation ? AnyMockImplementation extends T ?
+ *   MockHasBroadCallSignature<T> extends true ? MockHasBroadConstructSignature<T> : false : false : false}
+ *   MockIsBroadImplementation
+ */
+/**
+ * @template {Function} T
+ * @typedef {MockIsBroadImplementation<T> extends true ? any : MockNarrowCallResult<T>}
  *   MockUnambiguousCallResult
  */
 /**
