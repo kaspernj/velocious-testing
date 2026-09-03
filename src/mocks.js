@@ -9,7 +9,7 @@
  * @property {number[]} invocationCallOrder
  */
 /**
- * @typedef {Function & {
+ * @typedef {((...args: any[]) => any) & (new (...args: any[]) => any) & {
  *   mock: MockState,
  *   mockClear: () => MockFunction,
  *   mockReset: () => MockFunction,
@@ -70,6 +70,7 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
   function neutralImplementation() {}
   /** @type {MockState} */
   const state = {calls: [], results: [], instances: [], invocationCallOrder: []}
+  const constructedInstances = new WeakSet()
   /** @type {MockBehavior} */
   const behavior = {implementation, once: []}
 
@@ -89,6 +90,7 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
             constructor.prototype : neutralPrototype
         }
         value = Reflect.construct(constructor, args, new.target)
+        constructedInstances.add(value)
         state.instances.push(value)
       } else {
         value = selected ? Reflect.apply(selected, this, args) : undefined
@@ -102,6 +104,13 @@ function createMockFunction(registered, nextInvocationOrder, implementation) {
   })
 
   const neutralPrototype = mockFunction.prototype
+  Object.defineProperty(mockFunction, Symbol.hasInstance, {
+    configurable: true,
+    /** @param {any} value */
+    value(value) {
+      return constructedInstances.has(value) || Function.prototype[Symbol.hasInstance].call(mockFunction, value)
+    }
+  })
   if (implementation?.prototype && typeof implementation.prototype === "object") {
     mockFunction.prototype = implementation.prototype
   }
