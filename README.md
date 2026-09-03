@@ -78,7 +78,7 @@ describe("delayed work", () => {
 })
 ```
 
-Only `Date`, `setTimeout`/`clearTimeout`, and `setInterval`/`clearInterval` are replaced. Advancing is synchronous and deterministically ordered; `runPending()` snapshots each current occurrence once. Restoration discards pending work and reinstates the exact original properties. Runner timeouts, cleanup grace, durations, and event timestamps always use captured real clocks. See [Deterministic fake timers](docs/fake-timers.md) for scheduling and cleanup semantics.
+Only `Date`, `setTimeout`/`clearTimeout`, and `setInterval`/`clearInterval` are replaced. Advancing is synchronous and deterministically ordered; `runPending()` snapshots each current occurrence once, and reentrant clock-control calls are rejected. Restoration discards pending work and reinstates the exact original properties. Retained setters from an older installation reject, while retained clearers cannot cancel a later installation's work. Runner timeouts, cleanup grace, durations, and event timestamps always use captured real clocks. See [Deterministic fake timers](docs/fake-timers.md) for scheduling and cleanup semantics.
 
 Promise and asymmetric assertions compose with the same equality engine, and custom matchers can extend it without Node-only formatting:
 

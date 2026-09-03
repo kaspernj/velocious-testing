@@ -4,6 +4,7 @@ import {RealDate, realDateNow} from "./real-time.js"
 
 const CALLBACK_LIMIT = 10_000
 const TIMER_PROPERTIES = /** @type {const} */ (["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"])
+const realDateGetTime = RealDate.prototype.getTime
 /** @type {WeakMap<object, object>} */
 const activeTargets = new WeakMap()
 
@@ -35,15 +36,39 @@ const activeTargets = new WeakMap()
  * @property {any[]} args
  * @property {number | undefined} interval
  */
-/** @typedef {{target: FakeTimerTarget, descriptors: Map<string, PropertyDescriptor>}} Installation */
+/** @typedef {{target: FakeTimerTarget, descriptors: Map<string, PropertyDescriptor>, epoch: number}} Installation */
 
 /** @param {number | Date} value @returns {number} */
 function timeValue(value) {
-  const numeric = value instanceof RealDate ? value.getTime() : value
+  let numeric = value
+  if (typeof value !== "number") {
+    try {
+      numeric = Reflect.apply(realDateGetTime, value, [])
+    } catch {
+      throw new TypeError("Fake timer now must be a valid time")
+    }
+  }
   if (typeof numeric !== "number" || !Number.isFinite(numeric)) throw new TypeError("Fake timer now must be a valid time")
-  const clipped = new RealDate(numeric).getTime()
+  const clipped = Reflect.apply(realDateGetTime, new RealDate(numeric), [])
   if (!Number.isFinite(clipped)) throw new TypeError("Fake timer now must be a valid time")
   return clipped
+}
+
+/** @param {PropertyDescriptor | undefined} actual @param {PropertyDescriptor} expected @returns {boolean} */
+function sameDescriptor(actual, expected) {
+  if (!actual || actual.configurable !== expected.configurable || actual.enumerable !== expected.enumerable) return false
+  if ("value" in expected) {
+    return "value" in actual && actual.value === expected.value && actual.writable === expected.writable
+  }
+  return !("value" in actual) && actual.get === expected.get && actual.set === expected.set
+}
+
+/** @param {FakeTimerTarget} target @param {string} property @param {PropertyDescriptor} descriptor */
+function restoreProperty(target, property, descriptor) {
+  Object.defineProperty(target, property, descriptor)
+  if (!sameDescriptor(Object.getOwnPropertyDescriptor(target, property), descriptor)) {
+    throw new Error(`Could not verify restoration of fake timer target property ${property}`)
+  }
 }
 
 /** @param {any} delay @returns {number} */
@@ -88,6 +113,8 @@ export function createFakeTimers(options = {}) {
   let schedulerNow = 0
   let nextId = 1
   let nextOrder = 1
+  let nextEpoch = 1
+  let operationActive = false
   /** @type {Map<number, TimerRecord>} */
   let timers = new Map()
   /** @type {Installation | undefined} */
@@ -95,6 +122,17 @@ export function createFakeTimers(options = {}) {
 
   function requireInstalled() {
     if (!installation) throw new Error("Fake timers are not installed")
+  }
+
+  /** @param {number} epoch */
+  function requireCurrentEpoch(epoch) {
+    if (installation?.epoch !== epoch) throw new Error("Stale fake timer installation")
+  }
+
+  function beginClockOperation() {
+    requireInstalled()
+    if (operationActive) throw new Error("A fake timer clock-control operation is already active")
+    operationActive = true
   }
 
   /** @returns {TimerRecord | undefined} */
@@ -167,37 +205,47 @@ export function createFakeTimers(options = {}) {
     if (installation) throw new Error("Fake timers are already installed")
     if (activeTargets.has(target)) throw new Error("Target already has fake timers installed")
     const original = targetDescriptors(target)
+    const epoch = nextEpoch++
     /** @param {Function} callback @param {any} delay @param {...any} args @returns {number} */
-    function fakeSetTimeout(callback, delay, ...args) { return schedule(callback, delay, args, undefined) }
+    function fakeSetTimeout(callback, delay, ...args) {
+      requireCurrentEpoch(epoch)
+      return schedule(callback, delay, args, undefined)
+    }
     /** @param {Function} callback @param {any} delay @param {...any} args @returns {number} */
-    function fakeSetInterval(callback, delay, ...args) { return schedule(callback, delay, args, 0) }
+    function fakeSetInterval(callback, delay, ...args) {
+      requireCurrentEpoch(epoch)
+      return schedule(callback, delay, args, 0)
+    }
+    /** @param {any} id */
+    function fakeClearTimer(id) {
+      if (installation?.epoch === epoch) cancel(id)
+    }
     /** @type {Map<string, Function>} */
     const replacements = new Map()
     replacements.set("Date", fakeDateConstructor(target.Date))
     replacements.set("setTimeout", fakeSetTimeout)
-    replacements.set("clearTimeout", cancel)
+    replacements.set("clearTimeout", fakeClearTimer)
     replacements.set("setInterval", fakeSetInterval)
-    replacements.set("clearInterval", cancel)
+    replacements.set("clearInterval", fakeClearTimer)
     wallNow = initialNow
     schedulerNow = 0
-    nextId = 1
     nextOrder = 1
     timers = new Map()
-    installation = {target, descriptors: original}
+    installation = {target, descriptors: original, epoch}
     activeTargets.set(target, installation)
     /** @type {string[]} */
-    const replaced = []
+    const attempted = []
     try {
       for (const property of TIMER_PROPERTIES) {
+        attempted.push(property)
         const descriptor = /** @type {PropertyDescriptor} */ (original.get(property))
         Object.defineProperty(target, property, {...descriptor, value: replacements.get(property)})
-        replaced.push(property)
       }
     } catch (installationError) {
       const rollbackFailures = []
-      for (const property of replaced.reverse()) {
+      for (const property of attempted.reverse()) {
         try {
-          Object.defineProperty(target, property, /** @type {PropertyDescriptor} */ (original.get(property)))
+          restoreProperty(target, property, /** @type {PropertyDescriptor} */ (original.get(property)))
         } catch (error) { rollbackFailures.push(error) }
       }
       if (rollbackFailures.length) {
@@ -211,33 +259,41 @@ export function createFakeTimers(options = {}) {
 
   /** @param {number} milliseconds */
   function advanceBy(milliseconds) {
-    requireInstalled()
-    const destination = schedulerNow + advancement(milliseconds)
-    let callbacks = 0
-    for (let timer = nextTimer(); timer && timer.due <= destination; timer = nextTimer()) {
-      if (callbacks >= CALLBACK_LIMIT) throw new Error("Fake timer operation exceeded 10,000 callbacks")
-      callbacks += 1
-      moveTo(timer.due)
-      invoke(timer)
-      if (!installation) return
+    beginClockOperation()
+    try {
+      const destination = schedulerNow + advancement(milliseconds)
+      let callbacks = 0
+      for (let timer = nextTimer(); timer && timer.due <= destination; timer = nextTimer()) {
+        if (callbacks >= CALLBACK_LIMIT) throw new Error("Fake timer operation exceeded 10,000 callbacks")
+        callbacks += 1
+        moveTo(timer.due)
+        invoke(timer)
+        if (!installation) return
+      }
+      moveTo(destination)
+    } finally {
+      operationActive = false
     }
-    moveTo(destination)
   }
 
   function runPending() {
-    requireInstalled()
-    const pending = [...timers.values()]
-      .sort((left, right) => left.due - right.due || left.order - right.order)
-      .map((timer) => ({id: timer.id, generation: timer.generation}))
-    let callbacks = 0
-    for (const token of pending) {
-      const timer = timers.get(token.id)
-      if (!timer || timer.generation !== token.generation) continue
-      if (callbacks >= CALLBACK_LIMIT) throw new Error("Fake timer operation exceeded 10,000 callbacks")
-      callbacks += 1
-      moveTo(timer.due)
-      invoke(timer)
-      if (!installation) return
+    beginClockOperation()
+    try {
+      const pending = [...timers.values()]
+        .sort((left, right) => left.due - right.due || left.order - right.order)
+        .map((timer) => ({id: timer.id, generation: timer.generation}))
+      let callbacks = 0
+      for (const token of pending) {
+        const timer = timers.get(token.id)
+        if (!timer || timer.generation !== token.generation) continue
+        if (callbacks >= CALLBACK_LIMIT) throw new Error("Fake timer operation exceeded 10,000 callbacks")
+        callbacks += 1
+        moveTo(timer.due)
+        invoke(timer)
+        if (!installation) return
+      }
+    } finally {
+      operationActive = false
     }
   }
 
@@ -254,7 +310,7 @@ export function createFakeTimers(options = {}) {
     const failures = []
     for (const property of [...TIMER_PROPERTIES].reverse()) {
       try {
-        Object.defineProperty(target, property, /** @type {PropertyDescriptor} */ (descriptors.get(property)))
+        restoreProperty(target, property, /** @type {PropertyDescriptor} */ (descriptors.get(property)))
       } catch (error) { failures.push(error) }
     }
     if (failures.length) throw new AggregateError(failures, "Failed to restore fake timers")

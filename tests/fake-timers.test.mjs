@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import {runInNewContext} from "node:vm"
 
 import {createFakeTimers} from "../src/index.js"
 
@@ -110,6 +111,94 @@ test("scopes isolate targets, reject overlapping installs, and reset on reinstal
     assert.equal(first.timerCount, 0)
   } finally {
     first.restore()
+  }
+})
+
+test("stale wrappers and handles cannot affect a later installation", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: 0})
+  const calls = []
+
+  timers.install(target)
+  const staleSetTimeout = target.setTimeout
+  const staleClearTimeout = target.clearTimeout
+  const staleHandle = target.setTimeout(() => calls.push("old"), 10)
+  timers.restore()
+
+  timers.install(target)
+  try {
+    const currentHandle = target.setTimeout(() => calls.push("current"), 10)
+    assert.notEqual(currentHandle, staleHandle)
+    assert.throws(() => staleSetTimeout(() => calls.push("stale"), 0), /stale fake timer installation/i)
+    staleClearTimeout(currentHandle)
+    timers.advanceBy(10)
+    assert.deepEqual(calls, ["current"])
+  } finally {
+    timers.restore()
+  }
+})
+
+test("a partially applied replacement remains retriable when rollback fails", () => {
+  const target = timerTarget()
+  const original = descriptors(target)
+  let dateDefinitions = 0
+  const mutatingTarget = new Proxy(target, {
+    defineProperty(object, property, descriptor) {
+      if (property === "Date") {
+        dateDefinitions += 1
+        if (dateDefinitions === 1) {
+          Reflect.defineProperty(object, property, descriptor)
+          throw new Error("replacement failed after mutation")
+        }
+        if (dateDefinitions === 2) throw new Error("rollback failed")
+      }
+      return Reflect.defineProperty(object, property, descriptor)
+    }
+  })
+  const timers = createFakeTimers()
+
+  assert.throws(
+    () => timers.install(mutatingTarget),
+    (error) => error instanceof AggregateError && error.errors.some(({message}) => message === "rollback failed")
+  )
+  assert.notEqual(target.Date, original.Date.value)
+
+  timers.restore()
+  assert.deepEqual(descriptors(target), original)
+})
+
+test("Date values from another realm are accepted as clock inputs", () => {
+  const foreignDate = runInNewContext("new Date(1234)")
+  const target = timerTarget()
+  const timers = createFakeTimers({now: foreignDate})
+
+  timers.install(target)
+  try {
+    assert.equal(target.Date.now(), 1_234)
+    timers.setSystemTime(runInNewContext("new Date(5678)"))
+    assert.equal(target.Date.now(), 5_678)
+  } finally {
+    timers.restore()
+  }
+})
+
+test("clock-control operations reject reentrant calls and remain usable", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: 0})
+  timers.install(target)
+  try {
+    target.setTimeout(() => timers.advanceBy(0), 0)
+    assert.throws(() => timers.advanceBy(0), /clock-control operation is already active/i)
+
+    target.setTimeout(() => timers.runPending(), 0)
+    assert.throws(() => timers.runPending(), /clock-control operation is already active/i)
+
+    let called = false
+    target.setTimeout(() => { called = true }, 1)
+    timers.advanceBy(1)
+    assert.equal(called, true)
+  } finally {
+    timers.restore()
   }
 })
 
