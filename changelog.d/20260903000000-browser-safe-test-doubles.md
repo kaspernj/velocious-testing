@@ -1,0 +1,1 @@
+Add browser-safe isolated mock scopes with function behavior, call/result/constructor tracking, exact property spies and stubs, explicit bulk lifecycle controls, call matchers, generated declarations, and standalone package coverage without changing the context protocol or runner.

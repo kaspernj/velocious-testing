@@ -30,6 +30,7 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
       const result = await bundle({entryPoints: [entry], bundle: true, format: "esm", platform: "browser", write: false, metafile: true})
       assert.ok(result.outputFiles[0].text.length > 0)
       const inputPaths = Object.keys(result.metafile.inputs)
+      if (entry === "src/index.js") assert.ok(inputPaths.includes("src/mocks.js"))
       assert.equal(inputPaths.some((input) => input.startsWith("node:")), false)
       assert.doesNotMatch(result.outputFiles[0].text, /\bimport\.meta\b/u)
       for (const inputPath of inputPaths) {
@@ -47,7 +48,7 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
   await mkdir(artifactDirectory, {recursive: true})
   const dry = JSON.parse((await exec("npm", ["pack", "--dry-run", "--json", "--cache", cacheDirectory], {cwd: process.cwd()})).stdout)[0]
   const names = dry.files.map((file) => file.path)
-  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "README.md", "LICENSE"]) {
+  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/test-doubles.md", "README.md", "LICENSE"]) {
     assert.ok(names.includes(required), `missing ${required}`)
   }
   assert.ok(names.includes("src/index.js"))
@@ -70,6 +71,12 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     await writeFile(path.join(fixture, "package.json"), JSON.stringify({name: "standalone-smoke", private: true, type: "module"}))
     await exec("npm", ["install", "--ignore-scripts", "--cache", cacheDirectory, tarball], {cwd: fixture})
     const installedPackage = path.join(fixture, "node_modules", "@velocious", "testing")
+    const rootDeclarations = await readFile(path.join(installedPackage, "build", "index.d.ts"), "utf8")
+    const mockDeclarations = await readFile(path.join(installedPackage, "build", "mocks.d.ts"), "utf8")
+    assert.match(rootDeclarations, /createMockScope, mock.*\.\/mocks\.js/u)
+    for (const publicName of ["fn", "spyOn", "stub", "clearAll", "resetAll", "restoreAll"]) {
+      assert.match(mockDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
+    }
     const physicalCopy = path.join(fixture, "physical-copy")
     await cp(installedPackage, physicalCopy, {recursive: true})
     const compatibleCopies = await exec("node", ["--input-type=module", "--eval", [
@@ -199,6 +206,31 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
         ]
       }
     })
+    await writeFile(path.join(fixture, "tests", "stage2.test.js"), [
+      'import {createMockScope, describe, expect, it, mock} from "@velocious/testing"',
+      'if (typeof mock.fn !== "function") throw new Error("default mock scope is missing")',
+      'describe("stage2 doubles", () => {',
+      '  it("records calls for matchers", () => {',
+      '    const fn = createMockScope().fn().mockReturnValueOnce("first").mockReturnValue("later")',
+      '    if (fn() !== "first" || fn() !== "later") throw new Error("mock behavior failed")',
+      '    expect(fn).toHaveBeenCalledTimes(2)',
+      '    expect(fn).toHaveBeenNthCalledWith(1)',
+      '  })',
+      '  it("restores exact properties", () => {',
+      '    const scope = createMockScope()',
+      '    const target = {method(value) { return value + 1 }}',
+      '    const descriptor = Object.getOwnPropertyDescriptor(target, "method")',
+      '    scope.spyOn(target, "method")',
+      '    expect(target.method(2)).toBe(3)',
+      '    scope.restoreAll()',
+      '    expect(Object.getOwnPropertyDescriptor(target, "method")).toEqual(descriptor)',
+      '  })',
+      '})'
+    ].join("\n"))
+    const stageTwo = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/stage2.test.js"], {cwd: fixture})
+    assert.match(stageTwo.stdout, new RegExp(`^✓ stage2 doubles records calls for matchers ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(stageTwo.stdout, new RegExp(`^✓ stage2 doubles restores exact properties ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(stageTwo.stdout, /2 passed, 0 failed, 2 total/)
     await assert.rejects(
       exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["--example", "missing"], {cwd: fixture}),
       (error) => error.code === 1 && /No tests matched/.test(error.stderr)
