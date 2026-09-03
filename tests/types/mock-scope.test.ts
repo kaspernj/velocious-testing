@@ -1,9 +1,9 @@
 import {createMockScope} from "../../build/index.js"
 
 const scope = createMockScope()
-const stringTarget = {method() { return "string" }}
+const stringTarget = {method(value: string) { return value.toUpperCase() }}
 const symbolKey = Symbol("method")
-const symbolTarget = {[symbolKey]() { return "symbol" }}
+const symbolTarget = {[symbolKey](value: number) { return value + 1 }}
 
 class Constructed {
   value: string
@@ -49,11 +49,42 @@ unconfigured("callable fallback")
 new unconfigured("constructable fallback")
 unconfigured.mockImplementation((value: string) => value)
 
-scope.spyOn(stringTarget, "method")
+const stringSpy = scope.spyOn(stringTarget, "method")
+const stringSpyResult: string = stringSpy("value")
+void stringSpyResult
+stringSpy.mockImplementation((value: string) => value.toLowerCase())
+  .mockImplementationOnce((value: string) => value.trim())
+  .mockReturnValue("string return")
+// @ts-expect-error Property spy arguments retain the selected method contract.
+stringSpy(123)
+// @ts-expect-error Property spy call results retain the selected method contract.
+const invalidStringSpyResult: number = stringSpy("value")
+// @ts-expect-error Property spy replacement arguments retain the selected method contract.
+stringSpy.mockImplementation((value: number) => value)
+// @ts-expect-error Property spy replacement results retain the selected method contract.
+stringSpy.mockImplementation((value: string) => value.length)
+// @ts-expect-error Property spy return helpers retain the selected method result contract.
+stringSpy.mockReturnValue(123)
+
 scope.stub({method() { return "optional" }}, "method")
-scope.stub(stringTarget, "method", () => "stubbed")
-scope.spyOn(symbolTarget, symbolKey)
-scope.stub(symbolTarget, symbolKey, () => "stubbed")
+const stringStub = scope.stub(stringTarget, "method", (value: string) => `stubbed:${value}`)
+const stringStubResult: string = stringStub("value")
+void stringStubResult
+// @ts-expect-error Stub implementations retain the selected method argument and result contract.
+scope.stub(stringTarget, "method", (value: number) => value)
+
+const symbolSpy = scope.spyOn(symbolTarget, symbolKey)
+const symbolSpyResult: number = symbolSpy(1)
+void symbolSpyResult
+symbolSpy.mockImplementation((value: number) => value - 1).mockReturnValue(2)
+const symbolStub = scope.stub(symbolTarget, symbolKey, (value: number) => value * 2)
+const symbolStubResult: number = symbolStub(2)
+void symbolStubResult
+// @ts-expect-error Symbol-keyed stubs retain the selected method contract.
+scope.stub(symbolTarget, symbolKey, (value: string) => value)
+
+// @ts-expect-error Property doubles only accept function-valued property keys.
+scope.spyOn({value: 1}, "value")
 
 // @ts-expect-error Runtime and declarations only accept string or symbol keys.
 scope.spyOn({1() {}}, 1)

@@ -397,6 +397,68 @@ test("failed restoration remains registered and can be retried", () => {
   assert.doesNotThrow(() => scope.spyOn(target, "method").mockRestore())
 })
 
+test("failed property installation rolls back or remains registered for retry", () => {
+  const original = () => "original"
+  const descriptor = {
+    value: original,
+    writable: true,
+    enumerable: false,
+    configurable: true
+  }
+
+  const rollbackScope = testing.createMockScope()
+  const rollbackBacking = {}
+  Object.defineProperty(rollbackBacking, "method", descriptor)
+  let failRollbackInstallation = true
+  const rollbackTarget = new Proxy(rollbackBacking, {
+    defineProperty(object, key, replacement) {
+      const applied = Reflect.defineProperty(object, key, replacement)
+      if (key === "method" && replacement.value !== original && failRollbackInstallation) {
+        failRollbackInstallation = false
+        throw new Error("install failed after apply")
+      }
+      return applied
+    }
+  })
+
+  assert.throws(() => rollbackScope.spyOn(rollbackTarget, "method"), /install failed after apply/)
+  assert.deepEqual(Object.getOwnPropertyDescriptor(rollbackBacking, "method"), descriptor)
+  assert.doesNotThrow(() => rollbackScope.spyOn(rollbackTarget, "method").mockRestore())
+
+  const retryScope = testing.createMockScope()
+  const retryBacking = {}
+  Object.defineProperty(retryBacking, "method", descriptor)
+  let blockRollback = true
+  let failRetryInstallation = true
+  const retryTarget = new Proxy(retryBacking, {
+    defineProperty(object, key, replacement) {
+      if (key === "method" && replacement.value === original && blockRollback) {
+        throw new Error("rollback blocked")
+      }
+      const applied = Reflect.defineProperty(object, key, replacement)
+      if (key === "method" && replacement.value !== original && failRetryInstallation) {
+        failRetryInstallation = false
+        throw new Error("install failed after apply")
+      }
+      return applied
+    }
+  })
+
+  assert.throws(
+    () => retryScope.spyOn(retryTarget, "method"),
+    (error) => error instanceof AggregateError &&
+      error.errors.length === 2 &&
+      /install failed after apply/.test(error.errors[0].message) &&
+      /rollback blocked/.test(error.errors[1].message)
+  )
+  assert.notEqual(retryTarget.method, original)
+  assert.throws(() => retryScope.spyOn(retryTarget, "method"), /already has an active double/i)
+  blockRollback = false
+  assert.doesNotThrow(() => retryScope.restoreAll())
+  assert.deepEqual(Object.getOwnPropertyDescriptor(retryBacking, "method"), descriptor)
+  assert.doesNotThrow(() => retryScope.spyOn(retryTarget, "method").mockRestore())
+})
+
 test("duplicate active property doubles are rejected across scopes", () => {
   const firstScope = testing.createMockScope()
   const secondScope = testing.createMockScope()

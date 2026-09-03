@@ -37,7 +37,21 @@
  *   mockRejectedValueOnce: (reason: any) => MockFunction<T>
  * }} MockFunction<T>
  */
-/** @typedef {MockFunction & {mockRestore: () => MockFunction}} RestorableMockFunction */
+/**
+ * @template {Function} [T=AnyMockImplementation]
+ * @typedef {MockFunction<T> & {mockRestore: () => RestorableMockFunction<T>}} RestorableMockFunction<T>
+ */
+/**
+ * @template {object} T
+ * @typedef {Extract<{
+ *   [K in keyof T]-?: Extract<T[K], Function> extends never ? never : K
+ * }[keyof T], string | symbol>} FunctionPropertyKey<T>
+ */
+/**
+ * @template {object} T
+ * @template {FunctionPropertyKey<T>} K
+ * @typedef {Extract<T[K], Function>} PropertyFunction<T, K>
+ */
 /** @typedef {{implementation: Function | undefined, once: Function[]}} MockBehavior */
 /** @typedef {{state: MockState, behavior: MockBehavior}} MockControl */
 /**
@@ -46,7 +60,7 @@
  * @property {string | symbol} key
  * @property {PropertyDescriptor} descriptor
  * @property {boolean} owned
- * @property {RestorableMockFunction} implementation
+ * @property {RestorableMockFunction<any>} implementation
  * @property {boolean} active
  */
 
@@ -222,7 +236,7 @@ export function createMockScope() {
     return createMockFunction(registered, nextInvocationOrder, implementation)
   }
 
-  /** @param {PropertyDoubleRecord} record @returns {MockFunction} */
+  /** @param {PropertyDoubleRecord} record @returns {RestorableMockFunction<any>} */
   const restore = (record) => {
     if (!record.active) return record.implementation
     if (record.owned) Object.defineProperty(record.target, record.key, record.descriptor)
@@ -244,7 +258,7 @@ export function createMockScope() {
    * @param {string | symbol} key
    * @param {Function | undefined} implementation
    * @param {boolean} callThrough
-   * @returns {RestorableMockFunction}
+   * @returns {RestorableMockFunction<Function>}
    */
   const replaceProperty = (target, key, implementation, callThrough) => {
     validateTarget(target)
@@ -275,13 +289,7 @@ export function createMockScope() {
       enumerable: descriptor.enumerable,
       configurable: true
     }
-    try {
-      Object.defineProperty(target, key, replacement)
-    } catch (error) {
-      registered.delete(double)
-      throw error
-    }
-    const restorable = /** @type {RestorableMockFunction} */ (/** @type {unknown} */ (double))
+    const restorable = /** @type {RestorableMockFunction<Function>} */ (/** @type {unknown} */ (double))
     /** @type {PropertyDoubleRecord} */
     const record = {target, key, descriptor, owned, implementation: restorable, active: true}
     let targetRecords = activeProperties.get(target)
@@ -292,17 +300,53 @@ export function createMockScope() {
     targetRecords.set(key, record)
     propertyRecords.push(record)
     restorable.mockRestore = () => restore(record)
+    try {
+      Object.defineProperty(target, key, replacement)
+    } catch (installationError) {
+      try {
+        restore(record)
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [installationError, rollbackError],
+          `Failed to install and roll back property double ${propertyLabel(key)}`
+        )
+      }
+      throw installationError
+    }
     return restorable
+  }
+
+  /**
+   * @template {object} T
+   * @template {FunctionPropertyKey<T>} K
+   * @param {T} target
+   * @param {K} key
+   * @returns {RestorableMockFunction<PropertyFunction<T, K>>}
+   */
+  function spyOn(target, key) {
+    return /** @type {RestorableMockFunction<PropertyFunction<T, K>>} */ (
+      /** @type {unknown} */ (replaceProperty(target, key, undefined, true))
+    )
+  }
+
+  /**
+   * @template {object} T
+   * @template {FunctionPropertyKey<T>} K
+   * @param {T} target
+   * @param {K} key
+   * @param {PropertyFunction<T, K>} [implementation]
+   * @returns {RestorableMockFunction<PropertyFunction<T, K>>}
+   */
+  function stub(target, key, implementation) {
+    return /** @type {RestorableMockFunction<PropertyFunction<T, K>>} */ (
+      /** @type {unknown} */ (replaceProperty(target, key, implementation, false))
+    )
   }
 
   return {
     fn,
-    spyOn: /** @type {(target: object, key: string | symbol) => RestorableMockFunction} */ (
-      (target, key) => replaceProperty(target, key, undefined, true)
-    ),
-    stub: /** @type {(target: object, key: string | symbol, implementation?: Function) => RestorableMockFunction} */ (
-      (target, key, implementation) => replaceProperty(target, key, implementation, false)
-    ),
+    spyOn,
+    stub,
     clearAll() { for (const implementation of registered) implementation.mockClear() },
     resetAll() { for (const implementation of registered) implementation.mockReset() },
     restoreAll() {
