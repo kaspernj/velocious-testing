@@ -5,6 +5,16 @@ const stringTarget = {method(value: string) { return value.toUpperCase() }}
 const symbolKey = Symbol("method")
 const symbolTarget = {[symbolKey](value: number) { return value + 1 }}
 
+class MixedOverloadTarget {
+  method(value: string): string
+  method(value: number): Promise<number>
+  method(value: string | number): string | Promise<number> {
+    return typeof value === "string" ? value.toUpperCase() : Promise.resolve(value + 1)
+  }
+}
+
+const mixedOverloadTarget = new MixedOverloadTarget()
+
 class Constructed {
   value: string
 
@@ -16,6 +26,15 @@ class StaticConstructed {
   value: string
 
   constructor(value: string) { this.value = value }
+}
+
+interface HybridInstance {
+  value: number
+}
+
+declare const typedHybridImplementation: {
+  (value: string): string
+  new(value: number): HybridInstance
 }
 
 const callable = scope.fn((value: string, count: number) => ({value, count}))
@@ -40,19 +59,113 @@ configured.mockReturnValue(123)
 const asyncMock = scope.fn(async (value: number) => String(value))
   .mockResolvedValueOnce("resolved once")
   .mockResolvedValue("resolved")
+  .mockRejectedValueOnce(new Error("rejected once"))
+  .mockRejectedValue(new Error("rejected"))
 // @ts-expect-error Resolve helpers retain the promised result contract.
 asyncMock.mockResolvedValue(123)
+
+declare const allAsyncOverloadImplementation: {
+  (value: string): Promise<string>
+  (value: number): Promise<string>
+}
+const allAsyncOverloadMock = scope.fn(allAsyncOverloadImplementation)
+const allAsyncStringResult: Promise<string> = allAsyncOverloadMock("value")
+const allAsyncNumberResult: Promise<string> = allAsyncOverloadMock(1)
+void allAsyncStringResult
+void allAsyncNumberResult
+// @ts-expect-error Async overload mocks retain both overload argument contracts.
+allAsyncOverloadMock(true)
+// @ts-expect-error Async overload mocks retain their shared Promise result contract.
+const invalidAllAsyncResult: Promise<number> = allAsyncOverloadMock("value")
+allAsyncOverloadMock.mockResolvedValue("resolved")
+allAsyncOverloadMock.mockResolvedValueOnce("resolved once")
+allAsyncOverloadMock.mockRejectedValue(new Error("rejected"))
+allAsyncOverloadMock.mockRejectedValueOnce(new Error("rejected once"))
+// @ts-expect-error Async overload resolved helpers retain the shared resolved type.
+allAsyncOverloadMock.mockResolvedValue(1)
+// @ts-expect-error One-shot async overload resolved helpers retain the shared resolved type.
+allAsyncOverloadMock.mockResolvedValueOnce(1)
+
+const typedHybridMock = scope.fn(typedHybridImplementation)
+const typedHybridCallResult: string = typedHybridMock("value")
+const typedHybridConstructResult: HybridInstance = new typedHybridMock(1)
+void typedHybridCallResult
+void typedHybridConstructResult
+// @ts-expect-error Typed hybrid mocks preserve their call arguments.
+typedHybridMock(1)
+// @ts-expect-error Typed hybrid mocks preserve their constructor arguments.
+new typedHybridMock("value")
+// @ts-expect-error Typed hybrid mocks preserve their call result.
+const invalidTypedHybridCallResult: number = typedHybridMock("value")
+// @ts-expect-error Typed hybrid mocks preserve their constructed instance.
+const invalidTypedHybridConstructResult: string = new typedHybridMock(1)
+// @ts-expect-error Synchronous typed hybrids cannot use resolved helpers.
+typedHybridMock.mockResolvedValue("resolved")
+// @ts-expect-error Synchronous typed hybrids cannot use one-shot resolved helpers.
+typedHybridMock.mockResolvedValueOnce("resolved once")
+// @ts-expect-error Synchronous typed hybrids cannot use rejected helpers.
+typedHybridMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error Synchronous typed hybrids cannot use one-shot rejected helpers.
+typedHybridMock.mockRejectedValueOnce(new Error("rejected once"))
+
+declare const mixedImplementation:
+  ((value: string) => string) | ((value: string) => Promise<string>)
+const mixedMock = scope.fn(mixedImplementation)
+// @ts-expect-error Resolved helpers require every union branch to return a Promise.
+mixedMock.mockResolvedValue("resolved")
+// @ts-expect-error One-shot resolved helpers require every union branch to return a Promise.
+mixedMock.mockResolvedValueOnce("resolved once")
+// @ts-expect-error Rejected helpers require every union branch to return a Promise.
+mixedMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers require every union branch to return a Promise.
+mixedMock.mockRejectedValueOnce(new Error("rejected once"))
 
 // @ts-expect-error Resolved helpers cannot replace a typed synchronous return contract with a Promise.
 scope.fn((value: string) => value).mockResolvedValue("resolved")
 const synchronousOnceMock = scope.fn((value: string) => value)
 // @ts-expect-error One-shot resolved helpers cannot replace a typed synchronous return contract with a Promise.
 const invalidSynchronousResolvedResult: string = synchronousOnceMock.mockResolvedValueOnce("resolved")("value")
+// @ts-expect-error Rejected helpers cannot replace a typed synchronous return contract with a Promise.
+synchronousOnceMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot replace a typed synchronous return contract with a Promise.
+synchronousOnceMock.mockRejectedValueOnce(new Error("rejected once"))
+
+const alwaysThrowingMock = scope.fn(() => { throw new Error("always throws") })
+// @ts-expect-error Resolved helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockResolvedValue("resolved")
+// @ts-expect-error One-shot resolved helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockResolvedValueOnce("resolved once")
+// @ts-expect-error Rejected helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot replace a never-returning contract with a Promise.
+alwaysThrowingMock.mockRejectedValueOnce(new Error("rejected once"))
+
+const neverPromiseMock = scope.fn((): Promise<never> => Promise.reject(new Error("always rejects")))
+// @ts-expect-error A Promise<never> has no compatible resolved value.
+neverPromiseMock.mockResolvedValue("resolved")
+// @ts-expect-error A Promise<never> has no compatible one-shot resolved value.
+neverPromiseMock.mockResolvedValueOnce("resolved once")
+neverPromiseMock.mockRejectedValue(new Error("rejected"))
+  .mockRejectedValueOnce(new Error("rejected once"))
 
 const ConstructorDouble = scope.fn(Constructed)
 const constructed: Constructed = new ConstructorDouble("constructed")
 void constructed
 ConstructorDouble.mockImplementation(Constructed).mockImplementationOnce(Constructed)
+// @ts-expect-error Resolved helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockResolvedValue("resolved")
+// @ts-expect-error One-shot resolved helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockResolvedValueOnce("resolved once")
+// @ts-expect-error Rejected helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot add a call contract to a constructor-only mock.
+ConstructorDouble.mockRejectedValueOnce(new Error("rejected once"))
+ConstructorDouble.mockReturnValue(new Constructed("returned"))
+  .mockReturnValueOnce(new Constructed("returned once"))
+// @ts-expect-error Return helpers retain the supplied constructor's instance contract.
+ConstructorDouble.mockReturnValue({notConstructed: true})
+// @ts-expect-error One-shot return helpers retain the supplied constructor's instance contract.
+ConstructorDouble.mockReturnValueOnce({notConstructed: true})
 // @ts-expect-error The supplied constructor's argument types are preserved.
 new ConstructorDouble(123)
 // @ts-expect-error The supplied constructor's instance type is preserved.
@@ -79,7 +192,12 @@ const unconfigured = scope.fn()
 unconfigured("callable fallback")
 new unconfigured("constructable fallback")
 unconfigured.mockImplementation((value: string) => value)
+unconfigured.mockReturnValue({return: "fallback"})
+unconfigured.mockReturnValueOnce({return: "once fallback"})
 unconfigured.mockResolvedValue("resolved fallback")
+unconfigured.mockResolvedValueOnce("resolved once fallback")
+unconfigured.mockRejectedValue("rejected fallback")
+unconfigured.mockRejectedValueOnce("rejected once fallback")
 
 const stringSpy = scope.spyOn(stringTarget, "method")
 const stringSpyResult: string = stringSpy("value")
@@ -97,6 +215,22 @@ stringSpy.mockImplementation((value: number) => value)
 stringSpy.mockImplementation((value: string) => value.length)
 // @ts-expect-error Property spy return helpers retain the selected method result contract.
 stringSpy.mockReturnValue(123)
+
+const mixedOverloadSpy = scope.spyOn(mixedOverloadTarget, "method")
+const mixedOverloadStringResult: string = mixedOverloadTarget.method("value")
+const mixedOverloadPromiseResult: Promise<number> = mixedOverloadTarget.method(1)
+void mixedOverloadStringResult
+void mixedOverloadPromiseResult
+// @ts-expect-error Calls retain the overloaded target method's arguments while it is spied upon.
+mixedOverloadTarget.method(true)
+// @ts-expect-error Resolved helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockResolvedValue(1)
+// @ts-expect-error One-shot resolved helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockResolvedValueOnce(1)
+// @ts-expect-error Rejected helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockRejectedValue(new Error("rejected"))
+// @ts-expect-error One-shot rejected helpers cannot safely replace a mixed-overload return contract.
+mixedOverloadSpy.mockRejectedValueOnce(new Error("rejected once"))
 
 scope.stub({method() { return "optional" }}, "method")
 const stringStub = scope.stub(stringTarget, "method", (value: string) => `stubbed:${value}`)

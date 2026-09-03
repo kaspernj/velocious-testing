@@ -1,0 +1,1 @@
+Correct mock helper declarations so constructor-only return helpers require compatible instances and rejected-value helpers require a promise-returning call contract, while unconfigured mocks remain permissive.

@@ -55,7 +55,7 @@ expect(load).toHaveBeenCalledTimes(1)
 mocks.restoreAll()
 ```
 
-Mocks record calls, return/throw results, successful constructor instances, and scope-global invocation order. Persistent behavior and FIFO one-shot implementation/return/resolve/reject helpers are chainable. `mockClear()` removes history, `mockReset()` also removes behavior, and property-double `mockRestore()` reinstates exact captured ownership and descriptors. Scope-level `clearAll()`, `resetAll()`, and reverse-order `restoreAll()` are explicit; the runner does not perform magical cleanup. See [Browser-safe test doubles](docs/test-doubles.md) for descriptor rules and lifecycle details.
+Mocks record calls, return/throw results, successful constructor instances, and scope-global invocation order. Persistent behavior and FIFO one-shot implementation/return/resolve/reject helpers are chainable. Typed constructor return helpers require compatible instances, while resolved and rejected helpers require promise-returning call contracts; unconfigured mocks remain permissive. `mockClear()` removes history, `mockReset()` also removes behavior, and property-double `mockRestore()` reinstates exact captured ownership and descriptors. Scope-level `clearAll()`, `resetAll()`, and reverse-order `restoreAll()` are explicit; the runner does not perform magical cleanup. See [Browser-safe test doubles](docs/test-doubles.md) for descriptor rules and lifecycle details.
 
 Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, and `*-test.*` files under `test`, `tests`, `spec`, or `__tests__`:
 
