@@ -5,6 +5,7 @@ import {runInNewContext} from "node:vm"
 import {createFakeTimers} from "../src/index.js"
 
 const TIMER_PROPERTIES = ["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"]
+const TIME_CLIP_LIMIT = 8_640_000_000_000_000
 
 function timerTarget() {
   return {Date, setTimeout, clearTimeout, setInterval, clearInterval}
@@ -227,6 +228,113 @@ test("clock-control operations reject reentrant calls and remain usable", () => 
     target.setTimeout(() => { called = true }, 1)
     timers.advanceBy(1)
     assert.equal(called, true)
+  } finally {
+    timers.restore()
+  }
+})
+
+test("advanceBy rejects wall-clock overflow without consuming timers", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: TIME_CLIP_LIMIT})
+  const calls = []
+  timers.install(target)
+  try {
+    target.setTimeout(() => calls.push("ready"), 0)
+
+    assert.throws(() => timers.advanceBy(1), {name: "RangeError", message: /supported time range/i})
+    assert.equal(timers.now, TIME_CLIP_LIMIT)
+    assert.equal(timers.timerCount, 1)
+    assert.deepEqual(calls, [])
+
+    timers.advanceBy(0)
+    assert.deepEqual(calls, ["ready"])
+  } finally {
+    timers.restore()
+  }
+})
+
+test("advanceBy accepts exact lower and scheduler limits then rejects overflow atomically", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: -TIME_CLIP_LIMIT})
+  let called = false
+  timers.install(target)
+  try {
+    timers.advanceBy(TIME_CLIP_LIMIT)
+    assert.equal(timers.now, 0)
+    target.setTimeout(() => { called = true }, 0)
+
+    assert.throws(() => timers.advanceBy(1), {name: "RangeError", message: /supported time range/i})
+    assert.equal(timers.now, 0)
+    assert.equal(timers.timerCount, 1)
+    assert.equal(called, false)
+
+    timers.runPending()
+    assert.equal(called, true)
+  } finally {
+    timers.restore()
+  }
+})
+
+test("a huge finite advance rejects without changing usable timer state", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: 0})
+  let called = false
+  timers.install(target)
+  try {
+    target.setTimeout(() => { called = true }, 0)
+
+    assert.throws(() => timers.advanceBy(Number.MAX_VALUE), {name: "RangeError", message: /supported time range/i})
+    assert.equal(timers.now, 0)
+    assert.equal(timers.timerCount, 1)
+    assert.equal(called, false)
+
+    timers.advanceBy(0)
+    assert.equal(called, true)
+  } finally {
+    timers.restore()
+  }
+})
+
+test("timer scheduling rejects an out-of-range due time without allocating work", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: 0})
+  let called = false
+  timers.install(target)
+  try {
+    assert.throws(
+      () => target.setTimeout(() => {}, Number.MAX_VALUE),
+      {name: "RangeError", message: /supported time range/i}
+    )
+    assert.equal(timers.timerCount, 0)
+
+    target.setTimeout(() => { called = true }, 1)
+    timers.advanceBy(1)
+    assert.equal(called, true)
+  } finally {
+    timers.restore()
+  }
+})
+
+test("interval due-time overflow rejects before advancing or invoking", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: -TIME_CLIP_LIMIT})
+  let calls = 0
+  timers.install(target)
+  try {
+    const interval = target.setInterval(() => { calls += 1 }, TIME_CLIP_LIMIT)
+
+    assert.throws(
+      () => timers.advanceBy(TIME_CLIP_LIMIT),
+      {name: "RangeError", message: /supported time range/i}
+    )
+    assert.equal(timers.now, -TIME_CLIP_LIMIT)
+    assert.equal(timers.timerCount, 1)
+    assert.equal(calls, 0)
+
+    target.clearInterval(interval)
+    target.setTimeout(() => { calls += 1 }, 0)
+    timers.advanceBy(0)
+    assert.equal(calls, 1)
   } finally {
     timers.restore()
   }

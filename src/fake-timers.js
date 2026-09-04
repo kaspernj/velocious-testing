@@ -4,6 +4,7 @@ import {RealDate, realDateNow} from "./real-time.js"
 import {sharedRuntimeState} from "./shared-runtime-state.js"
 
 const CALLBACK_LIMIT = 10_000
+const TIME_CLIP_LIMIT = 8_640_000_000_000_000
 const TIMER_PROPERTIES = /** @type {const} */ (["Date", "setTimeout", "clearTimeout", "setInterval", "clearInterval"])
 const realDateGetTime = RealDate.prototype.getTime
 const activeTargets = sharedRuntimeState.activeTimerTargets
@@ -52,6 +53,14 @@ function timeValue(value) {
   const clipped = Reflect.apply(realDateGetTime, new RealDate(numeric), [])
   if (!Number.isFinite(clipped)) throw new TypeError("Fake timer now must be a valid time")
   return clipped
+}
+
+/** @param {number} value @returns {number} */
+function calculatedTime(value) {
+  if (!Number.isFinite(value) || Math.abs(value) > TIME_CLIP_LIMIT) {
+    throw new RangeError("Fake timer calculation exceeds the supported time range")
+  }
+  return value
 }
 
 /** @param {PropertyDescriptor | undefined} actual @param {PropertyDescriptor} expected @returns {boolean} */
@@ -147,20 +156,32 @@ export function createFakeTimers(options = {}) {
     return selected
   }
 
-  /** @param {number} targetTime */
-  function moveTo(targetTime) {
-    const destination = Math.max(schedulerNow, targetTime)
-    wallNow += destination - schedulerNow
-    schedulerNow = destination
+  /** @param {number} targetTime @returns {{wall: number, scheduler: number}} */
+  function clockTransition(targetTime) {
+    const scheduler = calculatedTime(Math.max(schedulerNow, targetTime))
+    const wall = calculatedTime(wallNow + (scheduler - schedulerNow))
+    return {wall, scheduler}
   }
 
-  /** @param {TimerRecord} timer */
-  function invoke(timer) {
+  /** @param {number} targetTime */
+  function moveTo(targetTime) {
+    const next = clockTransition(targetTime)
+    wallNow = next.wall
+    schedulerNow = next.scheduler
+  }
+
+  /** @param {TimerRecord} timer @returns {number | undefined} */
+  function nextIntervalDue(timer) {
+    return timer.interval === undefined ? undefined : calculatedTime(timer.due + timer.interval)
+  }
+
+  /** @param {TimerRecord} timer @param {number | undefined} intervalDue */
+  function invoke(timer, intervalDue) {
     if (timer.interval === undefined) timers.delete(timer.id)
     else {
       timers.set(timer.id, {
         ...timer,
-        due: timer.due + timer.interval,
+        due: /** @type {number} */ (intervalDue),
         order: nextOrder++,
         generation: timer.generation + 1
       })
@@ -173,10 +194,11 @@ export function createFakeTimers(options = {}) {
     requireInstalled()
     if (typeof callback !== "function") throw new TypeError("Fake timers require a function callback")
     const normalizedDelay = timerDelay(delay)
+    const due = calculatedTime(schedulerNow + normalizedDelay)
     const id = nextId++
     timers.set(id, {
       id,
-      due: schedulerNow + normalizedDelay,
+      due,
       order: nextOrder++,
       generation: 1,
       callback,
@@ -263,13 +285,14 @@ export function createFakeTimers(options = {}) {
   function advanceBy(milliseconds) {
     const activeInstallation = beginClockOperation()
     try {
-      const destination = schedulerNow + advancement(milliseconds)
+      const destination = clockTransition(schedulerNow + advancement(milliseconds)).scheduler
       let callbacks = 0
       for (let timer = nextTimer(); timer && timer.due <= destination; timer = nextTimer()) {
         if (callbacks >= CALLBACK_LIMIT) throw new Error("Fake timer operation exceeded 10,000 callbacks")
         callbacks += 1
+        const intervalDue = nextIntervalDue(timer)
         moveTo(timer.due)
-        invoke(timer)
+        invoke(timer, intervalDue)
         if (installation !== activeInstallation) return
       }
       moveTo(destination)
@@ -290,8 +313,9 @@ export function createFakeTimers(options = {}) {
         if (!timer || timer.generation !== token.generation) continue
         if (callbacks >= CALLBACK_LIMIT) throw new Error("Fake timer operation exceeded 10,000 callbacks")
         callbacks += 1
+        const intervalDue = nextIntervalDue(timer)
         moveTo(timer.due)
-        invoke(timer)
+        invoke(timer, intervalDue)
         if (installation !== activeInstallation) return
       }
     } finally {
