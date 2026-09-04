@@ -6,7 +6,7 @@ Guidance for every coding agent working in `@velocious/testing`.
 
 This package is independently versioned and independent of Velocious. It must never depend on, peer-depend on, import, dynamically resolve, or use Velocious source at runtime. Framework adapters belong in downstream packages. The root and `./runner` entry points are browser/Metro-safe and must not import Node built-ins or contain raw `import.meta` syntax; Node behavior belongs under `src/node` and the `./node` export.
 
-The default context protocol major is public compatibility state. Changes to its global symbol, protocol major, schema, declarations, results, or event shapes require migration documentation and compatibility tests. Keep collaborators focused: importer, attempt executor, test argument resolver, and reporter.
+The default context protocol major is public compatibility state. Changes to its global symbol, protocol major, schema, declarations, results, or event shapes require migration documentation and compatibility tests. Keep collaborators focused: importer, attempt executor, test argument resolver, suite hook executor, and reporter.
 
 ## Development
 
