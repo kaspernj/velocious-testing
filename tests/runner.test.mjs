@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import {spawnSync} from "node:child_process"
 import test from "node:test"
 
 import {createFakeTimers, createTestContext, objectContaining} from "../src/index.js"
@@ -92,6 +93,69 @@ test("runner deadlines, durations, and event timestamps ignore replaced timer an
     Object.defineProperty(globalThis, "clearTimeout", originalClearTimeout)
     Object.defineProperty(globalThis, "Date", originalDate)
   }
+})
+
+test("runner chunks oversized deadlines before using captured host timers", () => {
+  const script = String.raw`
+    import assert from "node:assert/strict"
+
+    const maximumDelay = 2_147_483_647
+    const scheduled = []
+    let monotonicNow = 0
+
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {now: () => monotonicNow}
+    })
+    globalThis.setTimeout = (callback, delay) => {
+      const timer = {callback, delay, cancelled: false, consumed: false}
+      scheduled.push(timer)
+      return scheduled.length - 1
+    }
+    globalThis.clearTimeout = (id) => { scheduled[id].cancelled = true }
+
+    const {createTestContext} = await import("./src/context.js")
+    const {runTests} = await import("./src/runner.js")
+    const context = createTestContext()
+    context.describe("long deadline", () => {
+      context.it("times out", {timeoutMs: maximumDelay + 100}, () => new Promise(() => {}))
+    })
+
+    async function nextTimer() {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const timer = scheduled.find((candidate) => !candidate.cancelled && !candidate.consumed)
+        if (timer) {
+          timer.consumed = true
+          return timer
+        }
+        await Promise.resolve()
+      }
+      throw new Error("Runner did not schedule a deadline check")
+    }
+
+    const runPromise = runTests({context})
+    const first = await nextTimer()
+    assert.equal(first.delay, maximumDelay)
+    monotonicNow += first.delay
+    first.callback()
+
+    const second = await nextTimer()
+    assert.equal(second.delay, 100)
+    monotonicNow += second.delay
+    second.callback()
+
+    const result = await runPromise
+    assert.equal(result.tests[0].status, "failed")
+    assert.match(result.tests[0].error.message, /Timed out after 2147483747ms/)
+    assert.ok(scheduled.every(({delay}) => delay <= maximumDelay))
+  `
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 5_000
+  })
+
+  assert.equal(child.status, 0, child.stderr || child.stdout)
 })
 
 test("fake timer lifecycle hooks isolate retries and restore after real runner timeouts", async () => {

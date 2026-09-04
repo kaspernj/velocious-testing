@@ -129,10 +129,12 @@ export function createFakeTimers(options = {}) {
     if (installation?.epoch !== epoch) throw new Error("Stale fake timer installation")
   }
 
+  /** @returns {Installation} */
   function beginClockOperation() {
     requireInstalled()
     if (operationActive) throw new Error("A fake timer clock-control operation is already active")
     operationActive = true
+    return /** @type {Installation} */ (installation)
   }
 
   /** @returns {TimerRecord | undefined} */
@@ -259,7 +261,7 @@ export function createFakeTimers(options = {}) {
 
   /** @param {number} milliseconds */
   function advanceBy(milliseconds) {
-    beginClockOperation()
+    const activeInstallation = beginClockOperation()
     try {
       const destination = schedulerNow + advancement(milliseconds)
       let callbacks = 0
@@ -268,7 +270,7 @@ export function createFakeTimers(options = {}) {
         callbacks += 1
         moveTo(timer.due)
         invoke(timer)
-        if (!installation) return
+        if (installation !== activeInstallation) return
       }
       moveTo(destination)
     } finally {
@@ -277,7 +279,7 @@ export function createFakeTimers(options = {}) {
   }
 
   function runPending() {
-    beginClockOperation()
+    const activeInstallation = beginClockOperation()
     try {
       const pending = [...timers.values()]
         .sort((left, right) => left.due - right.due || left.order - right.order)
@@ -290,7 +292,7 @@ export function createFakeTimers(options = {}) {
         callbacks += 1
         moveTo(timer.due)
         invoke(timer)
-        if (!installation) return
+        if (installation !== activeInstallation) return
       }
     } finally {
       operationActive = false

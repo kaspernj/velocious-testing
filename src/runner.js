@@ -54,6 +54,7 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
  */
 /** @type {ConsoleMethod[]} */
 const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug"]
+const MAX_HOST_TIMER_DELAY = 2_147_483_647
 
 /** @param {any} error @returns {TestErrorRecord} */
 function errorRecord(error) {
@@ -130,16 +131,20 @@ function scheduleRealDeadline(callback, timeoutMs) {
   let active = true
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let timer
+  /** @param {number} delay */
+  function scheduleCheck(delay) {
+    timer = realSetTimeout(checkDeadline, Math.min(MAX_HOST_TIMER_DELAY, Math.max(0, delay)))
+  }
   function checkDeadline() {
     if (!active) return
     const remaining = deadline - realMonotonicNow()
-    if (remaining > 0) timer = realSetTimeout(checkDeadline, remaining)
+    if (remaining > 0) scheduleCheck(remaining)
     else {
       active = false
       callback()
     }
   }
-  timer = realSetTimeout(checkDeadline, Math.max(0, timeoutMs))
+  scheduleCheck(timeoutMs)
   return () => {
     active = false
     if (timer !== undefined) realClearTimeout(timer)

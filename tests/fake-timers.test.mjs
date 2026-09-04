@@ -138,6 +138,36 @@ test("stale wrappers and handles cannot affect a later installation", () => {
   }
 })
 
+test("advanceBy stops when a callback replaces the installation epoch", () => {
+  const target = timerTarget()
+  const timers = createFakeTimers({now: 100})
+  const calls = []
+
+  timers.install(target)
+  try {
+    target.setTimeout(() => {
+      calls.push("old")
+      timers.restore()
+      timers.install(target)
+      target.setTimeout(() => calls.push("new"), 5)
+    }, 10)
+
+    timers.advanceBy(20)
+
+    assert.deepEqual(calls, ["old"])
+    assert.equal(target.Date.now(), 100)
+    assert.equal(timers.now, 100)
+    assert.equal(timers.timerCount, 1)
+
+    timers.advanceBy(5)
+    assert.deepEqual(calls, ["old", "new"])
+    assert.equal(target.Date.now(), 105)
+    assert.equal(timers.timerCount, 0)
+  } finally {
+    timers.restore()
+  }
+})
+
 test("a partially applied replacement remains retriable when rollback fails", () => {
   const target = timerTarget()
   const original = descriptors(target)

@@ -34,7 +34,7 @@ Timer handles are increasing positive numbers and are not reused when the same s
 
 The queue orders occurrences by due time and then insertion sequence. Equal-deadline work is FIFO. A timeout is removed before its callback. An interval queues its next occurrence from its prior scheduled deadline before invoking its callback; clearing that interval from inside the callback removes the queued occurrence. This preserves cadence without callback-time drift.
 
-`advanceBy(milliseconds)` requires a non-negative finite number and truncates fractional input toward zero. It runs every occurrence due through the destination, including nested work scheduled within the range, moves the clock to each deadline before invoking its callback, and finishes exactly at the destination. If a callback throws, the error propagates immediately, time remains at that callback, and other queued work stays pending.
+`advanceBy(milliseconds)` requires a non-negative finite number and truncates fractional input toward zero. It runs every occurrence due through the destination, including nested work scheduled within the range, moves the clock to each deadline before invoking its callback, and finishes exactly at the destination. If a callback restores and reinstalls its scope, the old advancement stops immediately; it does not run timers from the new installation or move the new clock. If a callback throws, the error propagates immediately, time remains at that callback, and other queued work stays pending.
 
 `runPending()` snapshots current occurrence identities, runs each still-pending snapshot at most once in due/FIFO order, and advances time as necessary. Cancellation is honored. Nested timers and newly queued interval occurrences are left for a later operation. Neither control automatically drains microtasks.
 
@@ -42,6 +42,6 @@ Each advancing operation is limited to 10,000 callbacks. Hitting the limit—for
 
 ## Runner clock separation
 
-Runner lifecycle deadlines, the bounded custom-executor cleanup grace, attempt durations, and event timestamps use real functions captured before public fake timers can install. Compatible physical package copies reuse the first validated realm-wide capture, including when a later copy is imported while another copy's fake clock is installed. Deadlines and durations use the captured monotonic `performance.now`; event timestamps use captured real wall time. Advancing or setting a fake clock therefore never advances, pauses, or rewrites runner bookkeeping.
+Runner lifecycle deadlines, the bounded custom-executor cleanup grace, attempt durations, and event timestamps use real functions captured before public fake timers can install. Compatible physical package copies reuse the first validated realm-wide capture, including when a later copy is imported while another copy's fake clock is installed. Deadlines and durations use the captured monotonic `performance.now`; deadlines beyond the host timer's maximum delay are rechecked in supported chunks instead of passing an oversized delay to the host. Event timestamps use captured real wall time. Advancing or setting a fake clock therefore never advances, pauses, or rewrites runner bookkeeping.
 
 The timer API does not change the context global symbol, protocol major 1, schema 3, declaration records, results, events, runner collaborators, or package export map.
