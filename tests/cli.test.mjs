@@ -119,6 +119,26 @@ test("CLI JSON reporter keeps delayed unawaited console output off stdout", asyn
   }
 })
 
+test("CLI JSON reporter keeps work scheduled during beforeExit off stdout", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-before-exit-"))
+  try {
+    await mkdir(path.join(root, "tests"))
+    await writeFile(path.join(root, "tests", "before-exit.test.mjs"), [
+      `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+      'process.once("beforeExit", () => setImmediate(() => console.log("beforeExit output")))',
+      'describe("beforeExit suite", () => it("passes", () => {}))'
+    ].join("\n"))
+
+    const run = runCli(root, ["--reporter", "json", "tests/before-exit.test.mjs"])
+
+    assert.equal(run.status, 0, run.stderr)
+    assert.deepEqual(parseSingleJsonLine(run.stdout).counts, {total: 1, passed: 1, failed: 0, skipped: 0})
+    assert.equal(run.stderr, "beforeExit output\n")
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test("CLI JSON reporter keeps delayed console output off stdout after an import failure", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-delayed-import-"))
   try {

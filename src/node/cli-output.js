@@ -12,13 +12,11 @@ export function formatTestResultLine(testResult) {
 }
 
 /**
- * Keeps live console output away from stdout while a JSON CLI run is active.
- * @template T
- * @param {() => T | Promise<T>} callback
+ * Routes stdout-bound console methods to the current error sink until restored.
  * @param {Pick<Console, "log" | "info" | "debug" | "error">} [target]
- * @returns {Promise<Awaited<T>>}
+ * @returns {() => void}
  */
-export async function withJsonConsoleRouting(callback, target = console) {
+export function installJsonConsoleRouting(target = console) {
   /** @type {Map<string, PropertyDescriptor>} */
   const descriptors = new Map()
   const writeError = target.error.bind(target)
@@ -34,10 +32,34 @@ export async function withJsonConsoleRouting(callback, target = console) {
         value: routeToError
       })
     }
-    return await callback()
-  } finally {
+  } catch (error) {
     for (const [method, descriptor] of descriptors) {
       Object.defineProperty(target, method, descriptor)
     }
+    throw error
+  }
+  let active = true
+  return () => {
+    if (!active) return
+    active = false
+    for (const [method, descriptor] of descriptors) {
+      Object.defineProperty(target, method, descriptor)
+    }
+  }
+}
+
+/**
+ * Keeps live console output away from stdout while a JSON operation is active.
+ * @template T
+ * @param {() => T | Promise<T>} callback
+ * @param {Pick<Console, "log" | "info" | "debug" | "error">} [target]
+ * @returns {Promise<Awaited<T>>}
+ */
+export async function withJsonConsoleRouting(callback, target = console) {
+  const restore = installJsonConsoleRouting(target)
+  try {
+    return await callback()
+  } finally {
+    restore()
   }
 }
