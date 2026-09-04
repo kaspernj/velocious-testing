@@ -200,7 +200,8 @@ export async function runNodeTests(options = {}) {
     reporter: options.reporter,
     attemptExecutor: options.attemptExecutor,
     attemptExecutorOwnsTimeout: options.attemptExecutorOwnsTimeout,
-    testArgumentResolver: options.testArgumentResolver
+    testArgumentResolver: options.testArgumentResolver,
+    suiteHookExecutor: options.suiteHookExecutor
   })
   return {...result, files}
 }

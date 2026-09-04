@@ -45,6 +45,130 @@ test("runner executes inherited hooks in order and reports pass/fail", async () 
   ])
 })
 
+test("suite hook executor receives both phases and can supply hook arguments", async () => {
+  const context = createTestContext()
+  const sentinel = {configuration: "sentinel"}
+  const observations = []
+
+  context.describe("outer", () => {
+    context.describe("inner", {timeoutMs: 25}, () => {
+      context.beforeAll((argument) => {
+        assert.equal(argument, sentinel)
+        observations.push("beforeAll hook")
+      })
+      context.afterAll((argument) => {
+        assert.equal(argument, sentinel)
+        observations.push("afterAll hook")
+      })
+      context.it("passes", () => observations.push("test"))
+    })
+  })
+  const suite = context.registry.suites[0].suites[0]
+
+  const result = await runTests({
+    context,
+    suiteHookExecutor: async (input) => {
+      assert.equal(input.context, context)
+      assert.equal(input.suite, suite)
+      assert.equal(input.hook, suite.hooks[input.phase][0])
+      assert.equal(input.timeoutMs, 25)
+      assert.equal(input.fullName, "outer inner")
+      observations.push(`${input.phase} wrapper:start`)
+      await input.defaultExecute([sentinel])
+      observations.push(`${input.phase} wrapper:success`)
+    }
+  })
+
+  assert.equal(result.status, "passed")
+  assert.deepEqual(observations, [
+    "beforeAll wrapper:start",
+    "beforeAll hook",
+    "beforeAll wrapper:success",
+    "test",
+    "afterAll wrapper:start",
+    "afterAll hook",
+    "afterAll wrapper:success"
+  ])
+})
+
+test("suite hook executor observes hook failures with the correct phase attribution", async () => {
+  const context = createTestContext()
+  const observations = []
+
+  context.describe("hook failures", () => {
+    context.beforeAll(() => { throw new Error("setup failed") })
+    context.afterAll(() => { throw new Error("cleanup failed") })
+    context.it("is blocked", () => { throw new Error("must not run") })
+  })
+
+  const result = await runTests({
+    context,
+    suiteHookExecutor: async (input) => {
+      observations.push(`${input.phase}:start`)
+      try {
+        await input.defaultExecute()
+        observations.push(`${input.phase}:success`)
+      } catch (error) {
+        observations.push(`${input.phase}:failure:${error.message}`)
+        throw error
+      }
+    }
+  })
+
+  assert.deepEqual(observations, [
+    "beforeAll:start",
+    "beforeAll:failure:setup failed",
+    "afterAll:start",
+    "afterAll:failure:cleanup failed"
+  ])
+  assert.equal(result.tests[0].error.message, "setup failed")
+  assert.equal(result.errors[0].phase, "afterAll")
+  assert.equal(result.errors[0].error.message, "cleanup failed")
+})
+
+test("suite hook executor failures are owned by their requested suite phase", async () => {
+  const context = createTestContext()
+
+  context.describe("setup executor failure", () => {
+    context.beforeAll(() => { throw new Error("setup callback must not run") })
+    context.it("is blocked", () => {})
+  })
+  context.describe("cleanup executor failure", () => {
+    context.afterAll(() => {})
+    context.it("passes first", () => {})
+  })
+
+  const result = await runTests({
+    context,
+    suiteHookExecutor: async (input) => {
+      if (input.phase === "beforeAll") throw new Error("beforeAll executor failed")
+      throw new Error("afterAll executor failed")
+    }
+  })
+
+  assert.equal(result.tests[0].error.message, "beforeAll executor failed")
+  assert.equal(result.tests[1].status, "passed")
+  assert.deepEqual(result.errors.map(({phase, error}) => [phase, error.message]), [
+    ["afterAll", "afterAll executor failed"]
+  ])
+})
+
+test("default suite hook execution passes zero arguments", async () => {
+  const context = createTestContext()
+  const received = []
+
+  context.describe("default hook arguments", () => {
+    context.beforeAll((...args) => received.push(["beforeAll", args]))
+    context.afterAll((...args) => received.push(["afterAll", args]))
+    context.it("passes", () => {})
+  })
+
+  const result = await runTests({context})
+
+  assert.equal(result.status, "passed")
+  assert.deepEqual(received, [["beforeAll", []], ["afterAll", []]])
+})
+
 test("runner deadlines, durations, and event timestamps ignore replaced timer and Date globals", async () => {
   const nativeSetTimeout = globalThis.setTimeout.bind(globalThis)
   const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis)
@@ -286,7 +410,7 @@ test("every afterEach runs in reverse order and aggregates failures after the pr
   ])
 })
 
-test("every afterAll runs in reverse order and aggregates every cleanup failure", async () => {
+test("every afterAll runs through the executor in reverse order and aggregates every cleanup failure", async () => {
   const context = createTestContext()
   const calls = []
   context.describe("suite cleanup", () => {
@@ -295,9 +419,21 @@ test("every afterAll runs in reverse order and aggregates every cleanup failure"
     context.afterAll(() => { calls.push("last afterAll"); throw new Error("last cleanup") })
     context.it("passes", () => calls.push("test"))
   })
+  const suite = context.registry.suites[0]
 
-  const result = await runTests({context})
-  assert.deepEqual(calls, ["test", "last afterAll", "middle afterAll", "first afterAll"])
+  const result = await runTests({
+    context,
+    suiteHookExecutor: async (input) => {
+      calls.push(`wrapper ${suite.hooks.afterAll.indexOf(input.hook)}`)
+      await input.defaultExecute()
+    }
+  })
+  assert.deepEqual(calls, [
+    "test",
+    "wrapper 2", "last afterAll",
+    "wrapper 1", "middle afterAll",
+    "wrapper 0", "first afterAll"
+  ])
   assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
   assert.equal(result.status, "failed")
   assert.equal(result.errors.length, 1)
@@ -422,7 +558,16 @@ test("active suite cleanup is reverse-ordered and idempotent while setup is bloc
     })
   })
 
-  const runner = new TestRunner({context})
+  const cleanupExecutions = new Map()
+  const runner = new TestRunner({
+    context,
+    suiteHookExecutor: async (input) => {
+      if (input.phase === "afterAll") {
+        cleanupExecutions.set(input.suite.name, (cleanupExecutions.get(input.suite.name) || 0) + 1)
+      }
+      await input.defaultExecute()
+    }
+  })
   const runPromise = runner.run()
   await childSetupStarted.promise
   let cleanupError
@@ -435,6 +580,7 @@ test("active suite cleanup is reverse-ordered and idempotent while setup is bloc
     releaseChildSetup.resolve()
   }
   const result = await runPromise
+  await runner.cleanupActiveSuites()
 
   if (cleanupError) throw cleanupError
   assert.deepEqual(calls, [
@@ -444,6 +590,7 @@ test("active suite cleanup is reverse-ordered and idempotent while setup is bloc
     "outer afterAll",
     "test"
   ])
+  assert.deepEqual(Object.fromEntries(cleanupExecutions), {child: 1, outer: 1})
   assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 0})
 })
 
@@ -456,8 +603,16 @@ test("suite lifecycle hooks honor inherited timeout configuration", async () => 
     context.it("does not run", () => calls.push("test"))
   })
 
-  const result = await runTests({context})
+  const phases = []
+  const result = await runTests({
+    context,
+    suiteHookExecutor: async (input) => {
+      phases.push(input.phase)
+      await input.defaultExecute()
+    }
+  })
   assert.deepEqual(calls, ["afterAll"])
+  assert.deepEqual(phases, ["beforeAll", "afterAll"])
   assert.equal(result.counts.failed, 1)
   assert.match(result.tests[0].error.message, /Timed out after 5ms/)
 })
