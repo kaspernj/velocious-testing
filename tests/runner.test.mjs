@@ -91,6 +91,38 @@ test("suite hook executor receives both phases and can supply hook arguments", a
   ])
 })
 
+test("suite hook executor stalls before or after default execution are bounded by the suite timeout", async () => {
+  for (const stallPosition of ["before", "after"]) {
+    const context = createTestContext()
+    let hookCalls = 0
+
+    context.describe(`executor stalls ${stallPosition} default`, {timeoutMs: 5}, () => {
+      context.beforeAll(() => { hookCalls += 1 })
+      context.it("is blocked", () => { throw new Error("must not run") })
+    })
+
+    let safetyTimer
+    const outcome = await Promise.race([
+      runTests({
+        context,
+        suiteHookExecutor: async (input) => {
+          if (stallPosition === "before") await new Promise(() => {})
+          await input.defaultExecute()
+          await new Promise(() => {})
+        }
+      }).then((result) => ({kind: "runner", result})),
+      new Promise((resolve) => {
+        safetyTimer = setTimeout(() => resolve({kind: "safety"}), 250)
+      })
+    ])
+    clearTimeout(safetyTimer)
+
+    assert.equal(outcome.kind, "runner", `executor stalled ${stallPosition} default execution`)
+    assert.equal(outcome.result.tests[0].error.message, `Timed out after 5ms: executor stalls ${stallPosition} default beforeAll`)
+    assert.equal(hookCalls, stallPosition === "before" ? 0 : 1)
+  }
+})
+
 test("suite hook executor observes hook failures with the correct phase attribution", async () => {
   const context = createTestContext()
   const observations = []
