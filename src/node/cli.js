@@ -36,8 +36,9 @@ try {
       process.exitCode = result.status === "passed" ? 0 : 1
     }
     if (json) await withJsonConsoleRouting(async () => {
-      await execute()
+      const [execution] = await Promise.allSettled([execute()])
       await new Promise((resolve) => process.once("beforeExit", resolve))
+      if (execution.status === "rejected") throw execution.reason
     })
     else await execute()
   }

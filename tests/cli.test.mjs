@@ -119,6 +119,25 @@ test("CLI JSON reporter keeps delayed unawaited console output off stdout", asyn
   }
 })
 
+test("CLI JSON reporter keeps delayed console output off stdout after an import failure", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-delayed-import-"))
+  try {
+    await mkdir(path.join(root, "tests"))
+    await writeFile(path.join(root, "tests", "broken.test.mjs"), [
+      'setImmediate(() => console.log("delayed output"))',
+      'throw new Error("import failed")'
+    ].join("\n"))
+
+    const run = runCli(root, ["--reporter", "json", "tests/broken.test.mjs"])
+
+    assert.equal(run.status, 1)
+    assert.equal(run.stdout, "")
+    assert.equal(run.stderr, "delayed output\nimport failed\n")
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test("explicit default CLI output matches omitted reporter output", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-default-cli-"))
   try {
