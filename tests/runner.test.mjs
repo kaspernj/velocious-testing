@@ -123,6 +123,51 @@ test("suite hook executor stalls before or after default execution are bounded b
   }
 })
 
+test("suite hook executor invalidates default execution after its lifecycle timeout", async () => {
+  const context = createTestContext()
+  const executorPaused = deferred()
+  const releaseExecutor = deferred()
+  const lateExecutionFinished = deferred()
+  const calls = []
+  let lateExecutionError
+
+  context.describe("late default execution", {timeoutMs: 5}, () => {
+    context.beforeAll(() => calls.push("beforeAll"))
+    context.afterAll(() => calls.push("afterAll"))
+    context.it("is blocked", () => { throw new Error("must not run") })
+  })
+
+  const runPromise = runTests({
+    context,
+    reporter: {onEvent(event) {
+      if (event.type === "run:finish") calls.push("run:finish")
+    }},
+    suiteHookExecutor: async (input) => {
+      if (input.phase === "afterAll") return await input.defaultExecute()
+      executorPaused.resolve()
+      await releaseExecutor.promise
+      try {
+        await input.defaultExecute()
+      } catch (error) {
+        lateExecutionError = error
+        throw error
+      } finally {
+        lateExecutionFinished.resolve()
+      }
+    }
+  })
+
+  await executorPaused.promise
+  const result = await runPromise
+  assert.equal(result.tests[0].error.message, "Timed out after 5ms: late default execution beforeAll")
+  assert.deepEqual(calls, ["afterAll", "run:finish"])
+
+  releaseExecutor.resolve()
+  await lateExecutionFinished.promise
+  assert.deepEqual(calls, ["afterAll", "run:finish"])
+  assert.equal(lateExecutionError?.message, "Timed out after 5ms: late default execution beforeAll")
+})
+
 test("suite hook executor observes hook failures with the correct phase attribution", async () => {
   const context = createTestContext()
   const observations = []

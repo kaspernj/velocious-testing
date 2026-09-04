@@ -427,6 +427,8 @@ export class TestRunner {
    * @returns {Promise<void>}
    */
   async executeSuiteHook(suite, hook, phase, timeoutMs, fullName) {
+    let defaultExecuteActive = true
+    const timeoutName = `${suite.name} ${phase}`
     /** @type {SuiteHookExecutorInput} */
     const input = {
       context: this.context,
@@ -436,12 +438,17 @@ export class TestRunner {
       timeoutMs,
       fullName,
       defaultExecute: async (args = []) => {
-        await runLifecycleCallback(hook.callback, args, timeoutMs, `${suite.name} ${phase}`)
+        if (!defaultExecuteActive) throw new Error(`Timed out after ${timeoutMs}ms: ${timeoutName}`)
+        await runLifecycleCallback(hook.callback, args, timeoutMs, timeoutName)
       }
     }
     const execution = Promise.resolve().then(() => this.suiteHookExecutor(input))
     if (!this.options.suiteHookExecutor) return await execution
-    await withTimeout(execution, timeoutMs, `${suite.name} ${phase}`)
+    try {
+      await withTimeout(execution, timeoutMs, timeoutName)
+    } finally {
+      defaultExecuteActive = false
+    }
   }
 
   /** @private @param {ActiveSuite} activeSuite @returns {Promise<void>} */
