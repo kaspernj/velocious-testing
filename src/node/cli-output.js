@@ -49,6 +49,34 @@ export function installJsonConsoleRouting(target = console) {
 }
 
 /**
+ * Reserves the current stdout writer and routes subsequent stream writes to stderr.
+ * @param {NodeJS.WriteStream} [stdout]
+ * @param {NodeJS.WriteStream} [stderr]
+ * @returns {{writeJson: NodeJS.WriteStream["write"], restore: () => void}}
+ */
+export function installJsonStdoutRouting(stdout = process.stdout, stderr = process.stderr) {
+  const descriptor = Object.getOwnPropertyDescriptor(stdout, "write")
+  const writeJson = /** @type {NodeJS.WriteStream["write"]} */ (stdout.write.bind(stdout))
+  const routeToError = /** @type {NodeJS.WriteStream["write"]} */ (stderr.write.bind(stderr))
+  Object.defineProperty(stdout, "write", {
+    configurable: true,
+    enumerable: descriptor?.enumerable ?? false,
+    value: routeToError,
+    writable: true
+  })
+  let active = true
+  return {
+    writeJson,
+    restore() {
+      if (!active) return
+      active = false
+      if (descriptor) Object.defineProperty(stdout, "write", descriptor)
+      else if (!Reflect.deleteProperty(stdout, "write")) throw new Error("Cannot restore stdout.write")
+    }
+  }
+}
+
+/**
  * Keeps live console output away from stdout while a JSON operation is active.
  * @template T
  * @param {() => T | Promise<T>} callback

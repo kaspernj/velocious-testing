@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {formatTestResultLine, withJsonConsoleRouting} from "../src/node/cli-output.js"
+import {formatTestResultLine, installJsonStdoutRouting, withJsonConsoleRouting} from "../src/node/cli-output.js"
 
 /** @param {string} fullName @param {"passed" | "failed"} status @param {number[]} durations */
 function testResult(fullName, status, durations) {
@@ -65,4 +65,39 @@ test("JSON console routing redirects stdout methods and restores their exact des
   for (const method of ["log", "info", "debug"]) {
     assert.deepEqual(Object.getOwnPropertyDescriptor(target, method), before[method])
   }
+})
+
+test("JSON stdout routing reserves the original writer and preserves redirected write semantics", () => {
+  const stdoutCalls = []
+  const stderrCalls = []
+  const stdout = {
+    write(...args) {
+      stdoutCalls.push(args)
+      return true
+    }
+  }
+  const stderr = {
+    write(...args) {
+      stderrCalls.push(args)
+      const callback = args.find((argument) => typeof argument === "function")
+      callback?.()
+      return false
+    }
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(stdout, "write")
+  const routing = installJsonStdoutRouting(stdout, stderr)
+  let callbacks = 0
+  const callback = () => { callbacks += 1 }
+
+  assert.equal(stdout.write("foreign output", "utf8", callback), false)
+  assert.equal(callbacks, 1)
+  assert.deepEqual(stderrCalls, [["foreign output", "utf8", callback]])
+  assert.equal(routing.writeJson("json output"), true)
+  assert.deepEqual(stdoutCalls, [["json output"]])
+
+  routing.restore()
+  routing.restore()
+  assert.deepEqual(Object.getOwnPropertyDescriptor(stdout, "write"), descriptor)
+  assert.equal(stdout.write("restored output"), true)
+  assert.deepEqual(stdoutCalls, [["json output"], ["restored output"]])
 })

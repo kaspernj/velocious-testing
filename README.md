@@ -116,7 +116,7 @@ Each test result line includes its execution time:
 
 Durations below one second use integer milliseconds; longer durations use seconds with millisecond precision. Retried tests sum every attempt, while tests blocked by suite setup are reported as not run.
 
-Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` set run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. `--reporter default` explicitly selects the existing human output. `--reporter json` writes one compact, newline-terminated run result to stdout without human result lines or summaries. Live test console output is routed to stderr in JSON mode so stdout remains machine-readable. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
+Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` set run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. `--reporter default` explicitly selects the existing human output. `--reporter json` writes one compact, newline-terminated run result to stdout without human result lines or summaries. The executable reserves stdout for that document and routes other stdout writes, including live console output and separately constructed consoles, to stderr for the remainder of the process. Startup failures are reported to stderr immediately even if imported code keeps the event loop active. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
 
 ## Public API
 

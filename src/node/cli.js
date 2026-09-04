@@ -2,7 +2,7 @@
 // @ts-check
 
 import {cliHelp, parseCliArguments, runNodeTests} from "./index.js"
-import {formatTestResultLine, installJsonConsoleRouting} from "./cli-output.js"
+import {formatTestResultLine, installJsonStdoutRouting} from "./cli-output.js"
 import {defaultTestContext} from "../context.js"
 import {createJsonReporter} from "../reporters.js"
 
@@ -18,6 +18,11 @@ function report(event) {
   }
 }
 
+function createJsonCliReporter() {
+  const stdoutRouting = installJsonStdoutRouting()
+  return createJsonReporter({write: (chunk) => { stdoutRouting.writeJson(chunk) }})
+}
+
 try {
   const options = parseCliArguments(process.argv.slice(2))
   if (options.help) {
@@ -25,7 +30,7 @@ try {
   } else {
     const {reporter: reporterName = "default", ...runOptions} = options
     const json = reporterName === "json"
-    const reporter = json ? createJsonReporter({write: (chunk) => { process.stdout.write(chunk) }}) : {onEvent: report}
+    const reporter = json ? createJsonCliReporter() : {onEvent: report}
     const execute = async () => {
       const result = await runNodeTests({...runOptions, reporter})
       if (!json) {
@@ -35,14 +40,7 @@ try {
       }
       process.exitCode = result.status === "passed" ? 0 : 1
     }
-    if (json) {
-      // The executable owns this routing for its remaining process lifetime so
-      // work scheduled during beforeExit cannot regain stdout.
-      installJsonConsoleRouting()
-      const [execution] = await Promise.allSettled([execute()])
-      await new Promise((resolve) => process.once("beforeExit", resolve))
-      if (execution.status === "rejected") throw execution.reason
-    } else await execute()
+    await execute()
   }
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error))

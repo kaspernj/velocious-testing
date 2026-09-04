@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {spawnSync} from "node:child_process"
+import {spawn, spawnSync} from "node:child_process"
 import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -98,6 +98,35 @@ test("CLI JSON reporter keeps live console output on stderr", async () => {
   }
 })
 
+test("CLI JSON reporter exclusively owns the stdout stream", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-stdout-"))
+  try {
+    await mkdir(path.join(root, "tests"))
+    await writeFile(path.join(root, "tests", "stdout.test.mjs"), [
+      'import {Console} from "node:console"',
+      `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+      'const accepted = process.stdout.write("direct output\\n", "utf8", () => {',
+      '  process.stdout.write("callback output\\n")',
+      '})',
+      'if (typeof accepted !== "boolean") throw new Error("stdout.write did not return a boolean")',
+      'new Console({stdout: process.stdout, stderr: process.stderr}).log("separate console output")',
+      'describe("stdout suite", () => it("passes", () => {}))'
+    ].join("\n"))
+
+    const run = runCli(root, ["--reporter", "json", "tests/stdout.test.mjs"])
+
+    assert.equal(run.status, 0, run.stderr)
+    assert.deepEqual(parseSingleJsonLine(run.stdout).counts, {total: 1, passed: 1, failed: 0, skipped: 0})
+    assert.deepEqual(run.stderr.trimEnd().split("\n").sort(), [
+      "callback output",
+      "direct output",
+      "separate console output"
+    ])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test("CLI JSON reporter keeps delayed unawaited console output off stdout", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-delayed-"))
   try {
@@ -152,7 +181,57 @@ test("CLI JSON reporter keeps delayed console output off stdout after an import 
 
     assert.equal(run.status, 1)
     assert.equal(run.stdout, "")
-    assert.equal(run.stderr, "delayed output\nimport failed\n")
+    assert.equal(run.stderr, "import failed\ndelayed output\n")
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("CLI JSON reporter reports import failures without waiting for persistent handles", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-persistent-import-"))
+  try {
+    await mkdir(path.join(root, "tests"))
+    await writeFile(path.join(root, "tests", "broken.test.mjs"), [
+      'import net from "node:net"',
+      "net.createServer().listen(0)",
+      'setImmediate(() => process.stderr.write("fixture checkpoint\\n"))',
+      'throw new Error("persistent import failed")'
+    ].join("\n"))
+
+    const child = spawn(process.execPath, [cliPath, "--reporter", "json", "tests/broken.test.mjs"], {
+      cwd: root,
+      stdio: ["ignore", "pipe", "pipe"]
+    })
+    child.stdout.setEncoding("utf8")
+    child.stderr.setEncoding("utf8")
+    let stdout = ""
+    let stderr = ""
+    child.stdout.on("data", (chunk) => { stdout += chunk })
+    /** @type {() => void} */
+    let checkpointReached
+    const checkpoint = new Promise((resolve) => { checkpointReached = resolve })
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk
+      if (stderr.includes("fixture checkpoint\n")) checkpointReached()
+    })
+    const exited = new Promise((resolve, reject) => {
+      child.once("error", reject)
+      child.once("exit", (code, signal) => resolve({code, signal}))
+    })
+
+    try {
+      await Promise.race([
+        checkpoint,
+        exited.then(({code, signal}) => {
+          throw new Error(`CLI exited before fixture checkpoint: code=${code} signal=${signal}`)
+        })
+      ])
+      assert.equal(stdout, "")
+      assert.equal(stderr, "persistent import failed\nfixture checkpoint\n")
+    } finally {
+      assert.equal(child.kill("SIGTERM"), true)
+      assert.deepEqual(await exited, {code: null, signal: "SIGTERM"})
+    }
   } finally {
     await rm(root, {recursive: true, force: true})
   }
