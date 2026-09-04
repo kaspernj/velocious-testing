@@ -313,6 +313,20 @@ test("generated matcher declarations expose promise, asymmetric, and extensible 
   ], {cwd: process.cwd()})
 })
 
+test("generated runner declarations expose the suite hook executor contract", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/runner.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("packed tarball has explicit exports, resolvable maps, declarations, executable CLI, and works standalone", async () => {
   const artifactDirectory = path.resolve("tmp/package")
   const cacheDirectory = path.resolve("tmp/npm-cache")

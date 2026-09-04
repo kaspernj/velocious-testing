@@ -306,3 +306,36 @@ test("runNodeTests forwards executor-owned timeout without advancing before clea
     await rm(root, {recursive: true, force: true})
   }
 })
+
+test("runNodeTests forwards the suite hook executor", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-suite-hooks-"))
+  try {
+    const testPath = path.join(root, "suite-hooks.test.mjs")
+    await writeFile(testPath, "")
+    const context = createTestContext()
+    const sentinel = {configuration: "node sentinel"}
+    const phases = []
+
+    const result = await runNodeTests({
+      context,
+      cwd: root,
+      candidates: [testPath],
+      importer: async () => {
+        context.describe("node suite hooks", () => {
+          context.beforeAll((argument) => assert.equal(argument, sentinel))
+          context.afterAll((argument) => assert.equal(argument, sentinel))
+          context.it("passes", () => {})
+        })
+      },
+      suiteHookExecutor: async (input) => {
+        phases.push(input.phase)
+        await input.defaultExecute([sentinel])
+      }
+    })
+
+    assert.equal(result.status, "passed")
+    assert.deepEqual(phases, ["beforeAll", "afterAll"])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})

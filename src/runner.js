@@ -18,7 +18,7 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
 /** @typedef {{protocolMajor: number, timestamp: number, type: string, [key: string]: any}} RunnerEvent */
 /** @typedef {{onEvent: (event: RunnerEvent) => void | Promise<void>}} Reporter */
 /** @typedef {{failed: false} | {failed: true, error: any}} FailureState */
-/** @typedef {{suite: SuiteDeclaration, timeoutMs: number, result: TestRunResult, cleanupPromise?: Promise<void>}} ActiveSuite */
+/** @typedef {{suite: SuiteDeclaration, timeoutMs: number, fullName: string, result: TestRunResult, cleanupPromise?: Promise<void>}} ActiveSuite */
 /**
  * @typedef {object} AttemptExecutorInput
  * @property {TestContext} context
@@ -34,6 +34,18 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
  */
 /** @typedef {(input: AttemptExecutorInput) => any | Promise<any>} AttemptExecutor */
 /** @typedef {(input: {context: TestContext, suite: SuiteDeclaration, test: TestDeclaration, attemptNumber: number}) => any[] | Promise<any[]>} TestArgumentResolver */
+/** @typedef {"beforeAll" | "afterAll"} SuiteHookPhase */
+/**
+ * @typedef {object} SuiteHookExecutorInput
+ * @property {TestContext} context
+ * @property {SuiteDeclaration} suite
+ * @property {import("./context.js").HookDeclaration} hook
+ * @property {SuiteHookPhase} phase
+ * @property {number} timeoutMs
+ * @property {string} fullName
+ * @property {(args?: any[]) => Promise<void>} defaultExecute
+ */
+/** @typedef {(input: SuiteHookExecutorInput) => any | Promise<any>} SuiteHookExecutor */
 /**
  * @typedef {object} TestRunnerOptions
  * @property {TestContext} [context]
@@ -50,6 +62,7 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
  * @property {AttemptExecutor} [attemptExecutor]
  * @property {boolean} [attemptExecutorOwnsTimeout]
  * @property {TestArgumentResolver} [testArgumentResolver]
+ * @property {SuiteHookExecutor} [suiteHookExecutor]
  * @property {Reporter} [reporter]
  */
 /** @type {ConsoleMethod[]} */
@@ -151,14 +164,6 @@ function scheduleRealDeadline(callback, timeoutMs) {
   }
 }
 
-/** @param {any[]} hooks @param {any[]} args @param {number} [timeoutMs] @param {string} [name] @returns {Promise<void>} */
-async function runHooks(hooks, args, timeoutMs, name) {
-  for (const hook of hooks) {
-    if (timeoutMs === undefined) await hook.callback(...args)
-    else await runLifecycleCallback(hook.callback, args, timeoutMs, name || "lifecycle hook")
-  }
-}
-
 /** @param {any[]} hooks @param {any[]} args @param {number} timeoutMs @param {string} name @returns {Promise<any[]>} */
 async function collectCleanupFailures(hooks, args, timeoutMs, name) {
   const failures = []
@@ -242,6 +247,12 @@ function buildFullName(lineage, test, omitEmptySuiteNames = false) {
   ].join(" ")
 }
 
+/** @param {SuiteDeclaration[]} lineage @param {boolean} [omitEmptySuiteNames] @returns {string} */
+function buildSuiteFullName(lineage, omitEmptySuiteNames = false) {
+  const names = lineage.map((suite) => suite.name)
+  return (omitEmptySuiteNames ? names.filter((name) => name !== "") : names).join(" ")
+}
+
 /** @param {any} suite @param {any[]} ancestors @param {any[]} output @param {boolean} [omitEmptySuiteNames] */
 function flatten(suite, ancestors, output, omitEmptySuiteNames = false) {
   const lineage = [...ancestors, suite]
@@ -283,6 +294,7 @@ export class TestRunner {
     }
     this.attemptExecutor = options.attemptExecutor || ((input) => defaultAttemptExecutor(input))
     this.testArgumentResolver = options.testArgumentResolver || (({test}) => test.rowArguments)
+    this.suiteHookExecutor = options.suiteHookExecutor || ((input) => input.defaultExecute([]))
     this.reporter = options.reporter || {onEvent() {}}
     /** @type {ActiveSuite[]} */
     this.activeSuites = []
@@ -357,13 +369,18 @@ export class TestRunner {
     const selectedDescendants = descendants.filter((entry) => selected.has(entry.test))
     if (!selectedDescendants.length) return
     const lineage = [...ancestors, suite]
+    const fullName = buildSuiteFullName(lineage, this.options.omitEmptySuiteNames)
     const timeoutMs = suite.options.timeoutMs ?? (suite.options.timeoutSeconds !== undefined ? suite.options.timeoutSeconds * 1000 : undefined) ?? this.options.timeoutMs ?? this.context.config.defaultTimeoutMs
-    const activeSuite = {suite, timeoutMs, result}
+    const activeSuite = {suite, timeoutMs, fullName, result}
     this.activeSuites.push(activeSuite)
     try {
       /** @type {FailureState} */
       let beforeAll = {failed: false}
-      try { await runHooks(suite.hooks.beforeAll, [], timeoutMs, `${suite.name} beforeAll`) } catch (error) { beforeAll = {failed: true, error} }
+      try {
+        for (const hook of suite.hooks.beforeAll) {
+          await this.executeSuiteHook(suite, hook, "beforeAll", timeoutMs, fullName)
+        }
+      } catch (error) { beforeAll = {failed: true, error} }
       if (beforeAll.failed) {
         for (const entry of selectedDescendants) await this.recordSetupFailure(entry, beforeAll.error, result)
       } else {
@@ -400,11 +417,50 @@ export class TestRunner {
     await activeSuite.cleanupPromise
   }
 
+  /**
+   * @private
+   * @param {SuiteDeclaration} suite
+   * @param {import("./context.js").HookDeclaration} hook
+   * @param {SuiteHookPhase} phase
+   * @param {number} timeoutMs
+   * @param {string} fullName
+   * @returns {Promise<void>}
+   */
+  async executeSuiteHook(suite, hook, phase, timeoutMs, fullName) {
+    let defaultExecuteActive = true
+    const timeoutName = `${suite.name} ${phase}`
+    /** @type {SuiteHookExecutorInput} */
+    const input = {
+      context: this.context,
+      suite,
+      hook,
+      phase,
+      timeoutMs,
+      fullName,
+      defaultExecute: async (args = []) => {
+        if (!defaultExecuteActive) throw new Error(`Timed out after ${timeoutMs}ms: ${timeoutName}`)
+        await runLifecycleCallback(hook.callback, args, timeoutMs, timeoutName)
+      }
+    }
+    const execution = Promise.resolve().then(() => this.suiteHookExecutor(input))
+    if (!this.options.suiteHookExecutor) return await execution
+    try {
+      await withTimeout(execution, timeoutMs, timeoutName)
+    } finally {
+      defaultExecuteActive = false
+    }
+  }
+
   /** @private @param {ActiveSuite} activeSuite @returns {Promise<void>} */
-  async runSuiteCleanup({suite, timeoutMs, result}) {
-    const afterAllFailures = await collectCleanupFailures(
-      [...suite.hooks.afterAll].reverse(), [], timeoutMs, `${suite.name} afterAll`
-    )
+  async runSuiteCleanup({suite, timeoutMs, fullName, result}) {
+    const afterAllFailures = []
+    for (const hook of [...suite.hooks.afterAll].reverse()) {
+      try {
+        await this.executeSuiteHook(suite, hook, "afterAll", timeoutMs, fullName)
+      } catch (error) {
+        afterAllFailures.push(error)
+      }
+    }
     const afterAll = aggregateFailures({failed: false}, afterAllFailures, "afterAll")
     if (!afterAll.failed) return
     result.errors.push({phase: "afterAll", suite: suite.name, error: errorRecord(afterAll.error)})
