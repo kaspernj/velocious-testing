@@ -49,8 +49,11 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
       const inputPaths = Object.keys(result.metafile.inputs)
       if (entry === "src/index.js") {
         assert.ok(inputPaths.includes("src/equality.js"))
+        assert.ok(inputPaths.includes("src/fake-timers.js"))
         assert.ok(inputPaths.includes("src/mocks.js"))
       }
+      assert.ok(inputPaths.includes("src/real-time.js"))
+      assert.ok(inputPaths.includes("src/shared-runtime-state.js"))
       assert.equal(inputPaths.some((input) => input.startsWith("node:")), false)
       assert.doesNotMatch(result.outputFiles[0].text, /\bimport\.meta\b/u)
       for (const inputPath of inputPaths) {
@@ -135,6 +138,100 @@ test("compatible physical package copies share asymmetric matcher identity", asy
   }
 })
 
+test("a later physical copy keeps runner deadlines on the shared real clock", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-shared-clock-"))
+  const first = path.join(fixture, "first")
+  const second = path.join(fixture, "second")
+  try {
+    await materializeCandidateSourceCopy(first)
+    await materializeCandidateSourceCopy(second)
+    const probe = await exec("node", ["--input-type=module", "--eval", [
+      "const nativeSetTimeout = globalThis.setTimeout.bind(globalThis);",
+      "const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis);",
+      `const first = await import(${JSON.stringify(path.join(first, "src", "index.js"))});`,
+      "const clock = first.createFakeTimers({now: 9000});",
+      "clock.install();",
+      "try {",
+      `  const second = await import(${JSON.stringify(path.join(second, "src", "index.js"))});`,
+      `  const {runTests} = await import(${JSON.stringify(path.join(second, "src", "runner.js"))});`,
+      "  const context = second.createTestContext();",
+      "  const events = [];",
+      "  context.describe(\"late copy\", () => {",
+      "    context.it(\"times out\", {timeoutMs: 10}, () => new Promise(() => {}));",
+      "  });",
+      "  const runPromise = runTests({context, reporter: {onEvent: (event) => events.push(event)}});",
+      "  let safetyTimer;",
+      "  const outcome = await Promise.race([",
+      "    runPromise.then(() => \"runner\"),",
+      "    new Promise((resolve) => { safetyTimer = nativeSetTimeout(() => resolve(\"safety\"), 200) })",
+      "  ]);",
+      "  nativeClearTimeout(safetyTimer);",
+      "  if (outcome === \"safety\") clock.advanceBy(10);",
+      "  const result = await runPromise;",
+      "  console.log(JSON.stringify({",
+      "    outcome,",
+      "    status: result.tests[0].status,",
+      "    message: result.tests[0].error?.message,",
+      "    realTimestamps: events.length > 0 && events.every((event) => event.timestamp !== 9000 && event.timestamp !== 9010)",
+      "  }));",
+      "} finally { clock.restore() }"
+    ].join("\n")], {cwd: fixture, timeout: 2_000})
+
+    assert.deepEqual(JSON.parse(probe.stdout), {
+      outcome: "runner",
+      status: "failed",
+      message: "Timed out after 10ms: late copy times out",
+      realTimestamps: true
+    })
+  } finally {
+    await rm(fixture, {recursive: true, force: true})
+  }
+})
+
+test("physical copies coordinate fake timer ownership and restore exactly", async () => {
+  const fixture = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-shared-timer-owner-"))
+  const first = path.join(fixture, "first")
+  const second = path.join(fixture, "second")
+  try {
+    await materializeCandidateSourceCopy(first)
+    await materializeCandidateSourceCopy(second)
+    const probe = await exec("node", ["--input-type=module", "--eval", [
+      "const properties = [\"Date\", \"setTimeout\", \"clearTimeout\", \"setInterval\", \"clearInterval\"];",
+      "const original = new Map(properties.map((property) => [property, Object.getOwnPropertyDescriptor(globalThis, property)]));",
+      `const first = await import(${JSON.stringify(path.join(first, "src", "index.js"))});`,
+      `const second = await import(${JSON.stringify(path.join(second, "src", "index.js"))});`,
+      "const firstClock = first.createFakeTimers({now: 1000});",
+      "const secondClock = second.createFakeTimers({now: 2000});",
+      "firstClock.install();",
+      "let overlapError;",
+      "try { secondClock.install() } catch (error) { overlapError = error?.message }",
+      "firstClock.restore();",
+      "if (overlapError) {",
+      "  secondClock.install();",
+      "  secondClock.restore();",
+      "} else {",
+      "  secondClock.restore();",
+      "}",
+      "const restored = properties.every((property) => {",
+      "  const actual = Object.getOwnPropertyDescriptor(globalThis, property);",
+      "  const expected = original.get(property);",
+      "  return actual?.value === expected?.value &&",
+      "    actual?.writable === expected?.writable &&",
+      "    actual?.enumerable === expected?.enumerable &&",
+      "    actual?.configurable === expected?.configurable;",
+      "});",
+      "console.log(JSON.stringify({overlapError, restored}));"
+    ].join("\n")], {cwd: fixture})
+
+    assert.deepEqual(JSON.parse(probe.stdout), {
+      overlapError: "Target already has fake timers installed",
+      restored: true
+    })
+  } finally {
+    await rm(fixture, {recursive: true, force: true})
+  }
+})
+
 test("expect.extend reserves constructor fields atomically without poisoning new expectations", async () => {
   for (const reservedName of ["value", "negated", "changes", "settlement"]) {
     const probe = await exec("node", ["--input-type=module", "--eval", [
@@ -188,6 +285,20 @@ test("generated mock declarations accept string and symbol keys but reject numer
   ], {cwd: process.cwd()})
 })
 
+test("generated fake timer declarations expose the bounded root contract", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/fake-timers.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("generated matcher declarations expose promise, asymmetric, and extensible custom contracts", async () => {
   await exec(path.resolve("node_modules/.bin/tsc"), [
     "--ignoreConfig",
@@ -208,7 +319,7 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
   await mkdir(artifactDirectory, {recursive: true})
   const dry = JSON.parse((await exec("npm", ["pack", "--dry-run", "--json", "--cache", cacheDirectory], {cwd: process.cwd()})).stdout)[0]
   const names = dry.files.map((file) => file.path)
-  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/matchers.md", "docs/test-doubles.md", "README.md", "LICENSE"]) {
+  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/fake-timers.js", "build/fake-timers.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/real-time.js", "build/real-time.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/fake-timers.md", "docs/matchers.md", "docs/test-doubles.md", "README.md", "LICENSE"]) {
     assert.ok(names.includes(required), `missing ${required}`)
   }
   assert.ok(names.includes("src/index.js"))
@@ -234,6 +345,12 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     const rootDeclarations = await readFile(path.join(installedPackage, "build", "index.d.ts"), "utf8")
     const matcherDeclarations = await readFile(path.join(installedPackage, "build", "matchers.d.ts"), "utf8")
     const mockDeclarations = await readFile(path.join(installedPackage, "build", "mocks.d.ts"), "utf8")
+    const timerDeclarations = await readFile(path.join(installedPackage, "build", "fake-timers.d.ts"), "utf8")
+    assert.match(rootDeclarations, /createFakeTimers.*\.\/fake-timers\.js/u)
+    for (const publicType of ["FakeTimerOptions", "FakeTimers", "FakeTimerTarget"]) {
+      assert.match(rootDeclarations, new RegExp(`export type ${publicType}\\b`, "u"))
+      assert.match(timerDeclarations, new RegExp(`export type ${publicType}\\b`, "u"))
+    }
     assert.match(rootDeclarations, /createMockScope, mock.*\.\/mocks\.js/u)
     for (const publicName of ["any", "anything", "Expect", "PromiseExpectation", "stringContaining", "stringMatching"]) {
       assert.match(rootDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
@@ -422,6 +539,24 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     assert.match(stageThree.stdout, new RegExp(`^✓ stage3 matchers awaits promise chains ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(stageThree.stdout, new RegExp(`^✓ stage3 matchers composes asymmetric mock arguments ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(stageThree.stdout, /2 passed, 0 failed, 2 total/)
+    await writeFile(path.join(fixture, "tests", "stage4.test.js"), [
+      'import {createFakeTimers, describe, expect, it} from "@velocious/testing"',
+      'describe("stage4 fake timers", () => {',
+      '  it("advances installed timers", () => {',
+      '    const timers = createFakeTimers({now: 1000})',
+      '    timers.install()',
+      '    try {',
+      '      let observed',
+      '      setTimeout(() => { observed = Date.now() }, 25)',
+      '      timers.advanceBy(25)',
+      '      expect(observed).toBe(1025)',
+      '    } finally { timers.restore() }',
+      '  })',
+      '})'
+    ].join("\n"))
+    const stageFour = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["tests/stage4.test.js"], {cwd: fixture})
+    assert.match(stageFour.stdout, new RegExp(`^✓ stage4 fake timers advances installed timers ${TEST_DURATION_PATTERN}$`, "mu"))
+    assert.match(stageFour.stdout, /1 passed, 0 failed, 1 total/)
     const diffProbe = await exec("node", ["--input-type=module", "--eval", [
       'import {expect} from "@velocious/testing";',
       'try { expect({z: 2, a: 1}).toEqual({a: 2}) } catch (error) { console.log(JSON.stringify(error.message)) }'

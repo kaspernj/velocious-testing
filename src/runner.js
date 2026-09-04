@@ -1,6 +1,7 @@
 // @ts-check
 
 import {CONTEXT_SCHEMA_VERSION, defaultTestContext, normalizeTags, PROTOCOL_MAJOR} from "./context.js"
+import {realClearTimeout, realDateNow, realMonotonicNow, realSetTimeout} from "./real-time.js"
 
 export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
 
@@ -53,6 +54,7 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
  */
 /** @type {ConsoleMethod[]} */
 const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug"]
+const MAX_HOST_TIMER_DELAY = 2_147_483_647
 
 /** @param {any} error @returns {TestErrorRecord} */
 function errorRecord(error) {
@@ -118,9 +120,35 @@ async function captureConsole(callback, live = false) {
 /** @param {Promise<any>} promise @param {number} timeoutMs @param {string} name @returns {Promise<any>} */
 function withTimeout(promise, timeoutMs, name) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms: ${name}`)), timeoutMs)
-    promise.then((value) => { clearTimeout(timer); resolve(value) }, (error) => { clearTimeout(timer); reject(error) })
+    const cancel = scheduleRealDeadline(() => reject(new Error(`Timed out after ${timeoutMs}ms: ${name}`)), timeoutMs)
+    promise.then((value) => { cancel(); resolve(value) }, (error) => { cancel(); reject(error) })
   })
+}
+
+/** @param {() => void} callback @param {number} timeoutMs @returns {() => void} */
+function scheduleRealDeadline(callback, timeoutMs) {
+  const deadline = realMonotonicNow() + timeoutMs
+  let active = true
+  /** @type {ReturnType<typeof setTimeout> | undefined} */
+  let timer
+  /** @param {number} delay */
+  function scheduleCheck(delay) {
+    timer = realSetTimeout(checkDeadline, Math.min(MAX_HOST_TIMER_DELAY, Math.max(0, delay)))
+  }
+  function checkDeadline() {
+    if (!active) return
+    const remaining = deadline - realMonotonicNow()
+    if (remaining > 0) scheduleCheck(remaining)
+    else {
+      active = false
+      callback()
+    }
+  }
+  scheduleCheck(timeoutMs)
+  return () => {
+    active = false
+    if (timer !== undefined) realClearTimeout(timer)
+  }
 }
 
 /** @param {any[]} hooks @param {any[]} args @param {number} [timeoutMs] @param {string} [name] @returns {Promise<void>} */
@@ -180,22 +208,26 @@ export async function defaultAttemptExecutor(input) {
 function withExecutorTimeout(promise, timeoutMs, name, defaultInvoked) {
   return new Promise((resolve, reject) => {
     let settled = false
-    let timer = setTimeout(onTimeout, timeoutMs)
+    let cancel = scheduleRealDeadline(onTimeout, timeoutMs)
     function onTimeout() {
       if (settled) return
       if (defaultInvoked()) {
-        timer = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms: ${name}`)), 100)
+        cancel = scheduleRealDeadline(() => {
+          settled = true
+          reject(new Error(`Timed out after ${timeoutMs}ms: ${name}`))
+        }, 100)
       } else {
+        settled = true
         reject(new Error(`Timed out after ${timeoutMs}ms: ${name}`))
       }
     }
     promise.then((value) => {
       settled = true
-      clearTimeout(timer)
+      cancel()
       resolve(value)
     }, (error) => {
       settled = true
-      clearTimeout(timer)
+      cancel()
       reject(error)
     })
   })
@@ -258,7 +290,7 @@ export class TestRunner {
 
   /** @private @param {Omit<RunnerEvent, "protocolMajor" | "timestamp">} event @returns {Promise<void>} */
   async emit(event) {
-    const structured = /** @type {RunnerEvent} */ ({protocolMajor: PROTOCOL_MAJOR, timestamp: Date.now(), ...event})
+    const structured = /** @type {RunnerEvent} */ ({protocolMajor: PROTOCOL_MAJOR, timestamp: realDateNow(), ...event})
     this.context.events.emit("runner", structured)
     await this.reporter.onEvent(structured)
   }
@@ -398,7 +430,7 @@ export class TestRunner {
     for (let attemptNumber = 1; attemptNumber <= retries + 1; attemptNumber += 1) {
       const argsValue = await this.testArgumentResolver({context: this.context, suite: entry.suite, test: entry.test, attemptNumber})
       const args = Array.isArray(argsValue) ? argsValue : [argsValue]
-      const startedAt = Date.now()
+      const startedAt = realMonotonicNow()
       const captured = await captureConsole(async () => {
         const input = {context: this.context, suite: entry.suite, test: entry.test, attemptNumber, beforeEach, afterEach, args, timeoutMs, fullName: entry.fullName}
         let defaultInvoked = false
@@ -412,7 +444,7 @@ export class TestRunner {
       }, this.context.config.consoleOutput === "live")
       const attempt = {
         attemptNumber,
-        durationMs: Date.now() - startedAt,
+        durationMs: Math.max(0, Math.round(realMonotonicNow() - startedAt)),
         consoleOutput: captured.output,
         error: captured.status === "failed" ? errorRecord(captured.error) : undefined
       }

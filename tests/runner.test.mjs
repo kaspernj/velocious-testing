@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
+import {spawnSync} from "node:child_process"
 import test from "node:test"
 
-import {createTestContext, objectContaining} from "../src/index.js"
+import {createFakeTimers, createTestContext, objectContaining} from "../src/index.js"
 import {PROTOCOL_MAJOR, TestRunner, runTests} from "../src/runner.js"
 
 function deferred() {
@@ -42,6 +43,188 @@ test("runner executes inherited hooks in order and reports pass/fail", async () 
     "inner afterAll",
     "afterAll"
   ])
+})
+
+test("runner deadlines, durations, and event timestamps ignore replaced timer and Date globals", async () => {
+  const nativeSetTimeout = globalThis.setTimeout.bind(globalThis)
+  const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis)
+  const originalSetTimeout = Object.getOwnPropertyDescriptor(globalThis, "setTimeout")
+  const originalClearTimeout = Object.getOwnPropertyDescriptor(globalThis, "clearTimeout")
+  const originalDate = Object.getOwnPropertyDescriptor(globalThis, "Date")
+  const fakeTimestamp = 8_000_000_000_000
+  const scheduled = []
+  const events = []
+  let runPromise
+  let raceResult
+  let safetyTimer
+
+  globalThis.setTimeout = (callback) => {
+    scheduled.push(callback)
+    return scheduled.length
+  }
+  globalThis.clearTimeout = () => {}
+  globalThis.Date = class extends Date {
+    static now() { return fakeTimestamp }
+  }
+
+  try {
+    const context = createTestContext()
+    context.describe("real runner clock", () => {
+      context.it("times out", {timeoutMs: 10}, async () => await new Promise(() => {}))
+    })
+    runPromise = runTests({context, reporter: {onEvent: (event) => events.push(event)}})
+    raceResult = await Promise.race([
+      runPromise.then(() => "runner"),
+      new Promise((resolve) => { safetyTimer = nativeSetTimeout(() => resolve("safety"), 250) })
+    ])
+    nativeClearTimeout(safetyTimer)
+    if (raceResult === "safety") {
+      for (const callback of scheduled.splice(0)) callback()
+    }
+    const result = await runPromise
+
+    assert.equal(raceResult, "runner", "runner deadline used the replaced setTimeout")
+    assert.equal(result.tests[0].status, "failed")
+    assert.match(result.tests[0].error.message, /Timed out after 10ms/)
+    assert.ok(result.tests[0].attempts[0].durationMs < 1_000)
+    assert.ok(events.every((event) => event.timestamp !== fakeTimestamp))
+  } finally {
+    Object.defineProperty(globalThis, "setTimeout", originalSetTimeout)
+    Object.defineProperty(globalThis, "clearTimeout", originalClearTimeout)
+    Object.defineProperty(globalThis, "Date", originalDate)
+  }
+})
+
+test("runner chunks oversized deadlines before using captured host timers", () => {
+  const script = String.raw`
+    import assert from "node:assert/strict"
+
+    const maximumDelay = 2_147_483_647
+    const scheduled = []
+    let monotonicNow = 0
+
+    Object.defineProperty(globalThis, "performance", {
+      configurable: true,
+      value: {now: () => monotonicNow}
+    })
+    globalThis.setTimeout = (callback, delay) => {
+      const timer = {callback, delay, cancelled: false, consumed: false}
+      scheduled.push(timer)
+      return scheduled.length - 1
+    }
+    globalThis.clearTimeout = (id) => { scheduled[id].cancelled = true }
+
+    const {createTestContext} = await import("./src/context.js")
+    const {runTests} = await import("./src/runner.js")
+    const context = createTestContext()
+    context.describe("long deadline", () => {
+      context.it("times out", {timeoutMs: maximumDelay + 100}, () => new Promise(() => {}))
+    })
+
+    async function nextTimer() {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const timer = scheduled.find((candidate) => !candidate.cancelled && !candidate.consumed)
+        if (timer) {
+          timer.consumed = true
+          return timer
+        }
+        await Promise.resolve()
+      }
+      throw new Error("Runner did not schedule a deadline check")
+    }
+
+    const runPromise = runTests({context})
+    const first = await nextTimer()
+    assert.equal(first.delay, maximumDelay)
+    monotonicNow += first.delay
+    first.callback()
+
+    const second = await nextTimer()
+    assert.equal(second.delay, 100)
+    monotonicNow += second.delay
+    second.callback()
+
+    const result = await runPromise
+    assert.equal(result.tests[0].status, "failed")
+    assert.match(result.tests[0].error.message, /Timed out after 2147483747ms/)
+    assert.ok(scheduled.every(({delay}) => delay <= maximumDelay))
+  `
+  const child = spawnSync(process.execPath, ["--input-type=module", "--eval", script], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    timeout: 5_000
+  })
+
+  assert.equal(child.status, 0, child.stderr || child.stdout)
+})
+
+test("fake timer lifecycle hooks isolate retries and restore after real runner timeouts", async () => {
+  const originalDate = globalThis.Date
+  const originalSetTimeout = globalThis.setTimeout
+  const timers = createFakeTimers({now: 1_000})
+  const context = createTestContext()
+  const observed = []
+  let attempts = 0
+
+  context.describe("isolated fake timer attempts", () => {
+    context.beforeEach(() => timers.install())
+    context.afterEach(() => timers.restore())
+    context.it("retries cleanly", {retries: 1}, () => {
+      attempts += 1
+      observed.push([Date.now(), timers.timerCount])
+      setTimeout(() => observed.push([Date.now(), timers.timerCount]), 5)
+      if (attempts === 1) throw new Error("retry")
+      timers.advanceBy(5)
+    })
+    context.it("times out on the real clock", {timeoutMs: 10}, async () => {
+      setTimeout(() => {}, 1)
+      await new Promise(() => {})
+    })
+  })
+
+  const result = await runTests({context})
+
+  assert.deepEqual(result.counts, {total: 2, passed: 1, failed: 1, skipped: 0})
+  assert.deepEqual(observed, [[1_000, 0], [1_000, 0], [1_005, 0]])
+  assert.equal(timers.timerCount, 0)
+  assert.equal(globalThis.Date, originalDate)
+  assert.equal(globalThis.setTimeout, originalSetTimeout)
+})
+
+test("custom executor cleanup grace uses captured real deadlines under fake timers", async () => {
+  const nativeSetTimeout = globalThis.setTimeout.bind(globalThis)
+  const nativeClearTimeout = globalThis.clearTimeout.bind(globalThis)
+  const timers = createFakeTimers({now: 9_000_000_000_000})
+  const context = createTestContext()
+  const events = []
+  context.describe("executor grace", () => context.it("is bounded", {timeoutMs: 5}, () => {}))
+
+  timers.install()
+  try {
+    let safetyTimer
+    const runPromise = runTests({
+      context,
+      reporter: {onEvent: (event) => events.push(event)},
+      attemptExecutor(input) {
+        void input.defaultExecute()
+        return new Promise(() => {})
+      }
+    })
+    const outcome = await Promise.race([
+      runPromise.then((result) => ({kind: "runner", result})),
+      new Promise((resolve) => { safetyTimer = nativeSetTimeout(() => resolve({kind: "safety"}), 500) })
+    ])
+    nativeClearTimeout(safetyTimer)
+
+    assert.equal(outcome.kind, "runner")
+    assert.equal(outcome.result.tests[0].status, "failed")
+    assert.match(outcome.result.tests[0].error.message, /Timed out after 5ms/)
+    assert.ok(outcome.result.tests[0].attempts[0].durationMs >= 100)
+    assert.ok(outcome.result.tests[0].attempts[0].durationMs < 500)
+    assert.ok(events.every((event) => event.timestamp !== timers.now))
+  } finally {
+    timers.restore()
+  }
 })
 
 test("runner awaits promise assertion chains returned by test callbacks", async () => {

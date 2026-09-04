@@ -42,4 +42,4 @@ String and symbol keys and own or inherited data methods are supported. Accessor
 
 The expectation API provides `toHaveBeenCalled`, `toHaveBeenCalledTimes`, `toHaveBeenCalledWith`, `toHaveBeenLastCalledWith`, and one-based `toHaveBeenNthCalledWith`. Every matcher supports `.not`; argument comparisons use the same deep equality and all asymmetric values as `toEqual`. Positive argument mismatches include deterministic structural differences; the general call matcher selects the closest recorded call. See [Advanced matchers](matchers.md).
 
-Module mocking, getter/setter spying, fake timers, and automatic lifecycle cleanup are intentionally outside this API.
+Module mocking, getter/setter spying, and automatic lifecycle cleanup are intentionally outside this API. Deterministic clocks are a separate explicit scope documented in [Deterministic fake timers](fake-timers.md); they do not share mock state.
