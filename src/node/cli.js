@@ -35,7 +35,10 @@ try {
       }
       process.exitCode = result.status === "passed" ? 0 : 1
     }
-    if (json) await withJsonConsoleRouting(execute)
+    if (json) await withJsonConsoleRouting(async () => {
+      await execute()
+      await new Promise((resolve) => process.once("beforeExit", resolve))
+    })
     else await execute()
   }
 } catch (error) {

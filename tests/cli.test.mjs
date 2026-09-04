@@ -98,6 +98,27 @@ test("CLI JSON reporter keeps live console output on stderr", async () => {
   }
 })
 
+test("CLI JSON reporter keeps delayed unawaited console output off stdout", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-delayed-"))
+  try {
+    await mkdir(path.join(root, "tests"))
+    await writeFile(path.join(root, "tests", "delayed.test.mjs"), [
+      `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+      'describe("delayed suite", () => it("writes later", () => {',
+      '  setImmediate(() => console.log("delayed output"))',
+      '}))'
+    ].join("\n"))
+
+    const run = runCli(root, ["--reporter", "json", "tests/delayed.test.mjs"])
+
+    assert.equal(run.status, 0, run.stderr)
+    assert.deepEqual(parseSingleJsonLine(run.stdout).counts, {total: 1, passed: 1, failed: 0, skipped: 0})
+    assert.equal(run.stderr, "delayed output\n")
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
 test("explicit default CLI output matches omitted reporter output", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-default-cli-"))
   try {
