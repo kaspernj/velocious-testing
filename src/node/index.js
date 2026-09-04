@@ -21,6 +21,7 @@ let importSequence = 0
  * @property {string[]} excludeTags
  * @property {string[]} examples
  * @property {string[]} setupFiles
+ * @property {"default" | "json"} [reporter]
  * @property {boolean} [help]
  * @property {number} [retries]
  * @property {number} [timeoutMs]
@@ -95,7 +96,7 @@ export async function discoverTestFiles(options = {}) {
 export function parseCliArguments(argv) {
   /** @type {CliOptions} */
   const output = {candidates: [], includeTags: [], excludeTags: [], examples: [], setupFiles: []}
-  const takesValue = new Set(["--include-tag", "--exclude-tag", "--example", "--setup", "--retries", "--timeout"])
+  const takesValue = new Set(["--include-tag", "--exclude-tag", "--example", "--setup", "--retries", "--timeout", "--reporter"])
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
     if (argument === "--help" || argument === "-h") { output.help = true; continue }
@@ -114,6 +115,10 @@ export function parseCliArguments(argv) {
     else if (name === "--setup") output.setupFiles.push(optionValue)
     else if (name === "--retries") output.retries = numericOption(name, optionValue)
     else if (name === "--timeout") output.timeoutMs = numericOption(name, optionValue)
+    else if (name === "--reporter") {
+      if (!["default", "json"].includes(optionValue)) throw new Error("--reporter must be one of: default, json")
+      output.reporter = /** @type {"default" | "json"} */ (optionValue)
+    }
     else if (name.startsWith("-")) throw new Error(`Unknown option: ${name}`)
     else output.candidates.push(argument)
   }
@@ -208,5 +213,5 @@ export async function runNodeTests(options = {}) {
 
 /** @returns {string} */
 export function cliHelp() {
-  return `Usage: velocious-test [options] [path[:line] ...]\n\nOptions:\n  --include-tag TAG   Require a tag (repeatable)\n  --exclude-tag TAG   Exclude a tag (repeatable)\n  --example PATTERN   Match a full test description (repeatable)\n  --setup FILE        Import a setup file before tests (repeatable)\n  --retries COUNT     Retry failed tests\n  --timeout MS        Default lifecycle timeout\n  -h, --help          Show this help\n`
+  return `Usage: velocious-test [options] [path[:line] ...]\n\nOptions:\n  --include-tag TAG   Require a tag (repeatable)\n  --exclude-tag TAG   Exclude a tag (repeatable)\n  --example PATTERN   Match a full test description (repeatable)\n  --setup FILE        Import a setup file before tests (repeatable)\n  --retries COUNT     Retry failed tests\n  --timeout MS        Default lifecycle timeout\n  --reporter FORMAT  Use default or json output\n  -h, --help          Show this help\n`
 }

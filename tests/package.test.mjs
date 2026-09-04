@@ -40,10 +40,10 @@ test("lockfile and package metadata contain no Velocious dependency", async () =
   assert.equal(Object.keys(lock.packages || {}).some((name) => name === "node_modules/velocious"), false)
 })
 
-test("root and runner bundle for browsers without Node built-ins", async () => {
+test("root, runner, and reporters bundle for browsers without Node built-ins", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-bundle-"))
   try {
-    for (const entry of ["src/index.js", "src/runner.js"]) {
+    for (const entry of ["src/index.js", "src/runner.js", "src/reporters.js"]) {
       const result = await bundle({entryPoints: [entry], bundle: true, format: "esm", platform: "browser", write: false, metafile: true})
       assert.ok(result.outputFiles[0].text.length > 0)
       const inputPaths = Object.keys(result.metafile.inputs)
@@ -52,8 +52,10 @@ test("root and runner bundle for browsers without Node built-ins", async () => {
         assert.ok(inputPaths.includes("src/fake-timers.js"))
         assert.ok(inputPaths.includes("src/mocks.js"))
       }
-      assert.ok(inputPaths.includes("src/real-time.js"))
-      assert.ok(inputPaths.includes("src/shared-runtime-state.js"))
+      if (entry !== "src/reporters.js") {
+        assert.ok(inputPaths.includes("src/real-time.js"))
+        assert.ok(inputPaths.includes("src/shared-runtime-state.js"))
+      }
       assert.equal(inputPaths.some((input) => input.startsWith("node:")), false)
       assert.doesNotMatch(result.outputFiles[0].text, /\bimport\.meta\b/u)
       for (const inputPath of inputPaths) {
@@ -327,13 +329,27 @@ test("generated runner declarations expose the suite hook executor contract", as
   ], {cwd: process.cwd()})
 })
 
+test("generated reporter declarations expose the JSON writer contract", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/reporters.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("packed tarball has explicit exports, resolvable maps, declarations, executable CLI, and works standalone", async () => {
   const artifactDirectory = path.resolve("tmp/package")
   const cacheDirectory = path.resolve("tmp/npm-cache")
   await mkdir(artifactDirectory, {recursive: true})
   const dry = JSON.parse((await exec("npm", ["pack", "--dry-run", "--json", "--cache", cacheDirectory], {cwd: process.cwd()})).stdout)[0]
   const names = dry.files.map((file) => file.path)
-  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/fake-timers.js", "build/fake-timers.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/real-time.js", "build/real-time.d.ts", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/fake-timers.md", "docs/matchers.md", "docs/test-doubles.md", "README.md", "LICENSE"]) {
+  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/fake-timers.js", "build/fake-timers.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/real-time.js", "build/real-time.d.ts", "build/reporters.js", "build/reporters.js.map", "build/reporters.d.ts", "build/reporters.d.ts.map", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/fake-timers.md", "docs/matchers.md", "docs/reporters.md", "docs/test-doubles.md", "README.md", "LICENSE"]) {
     assert.ok(names.includes(required), `missing ${required}`)
   }
   assert.ok(names.includes("src/index.js"))
@@ -360,6 +376,7 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     const matcherDeclarations = await readFile(path.join(installedPackage, "build", "matchers.d.ts"), "utf8")
     const mockDeclarations = await readFile(path.join(installedPackage, "build", "mocks.d.ts"), "utf8")
     const timerDeclarations = await readFile(path.join(installedPackage, "build", "fake-timers.d.ts"), "utf8")
+    const reporterDeclarations = await readFile(path.join(installedPackage, "build", "reporters.d.ts"), "utf8")
     assert.match(rootDeclarations, /createFakeTimers.*\.\/fake-timers\.js/u)
     for (const publicType of ["FakeTimerOptions", "FakeTimers", "FakeTimerTarget"]) {
       assert.match(rootDeclarations, new RegExp(`export type ${publicType}\\b`, "u"))
@@ -378,6 +395,16 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     for (const publicName of ["fn", "spyOn", "stub", "clearAll", "resetAll", "restoreAll"]) {
       assert.match(mockDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
     }
+    assert.match(reporterDeclarations, /createJsonReporter\(.*JsonReporterOptions.*\):.*Reporter/u)
+    assert.match(reporterDeclarations, /export type JsonReporterOptions\b/u)
+    const reporterProbe = await exec("node", ["--input-type=module", "--eval", [
+      'import {createJsonReporter} from "@velocious/testing/reporters";',
+      "const chunks = [];",
+      "const reporter = createJsonReporter({write: (chunk) => chunks.push(chunk)});",
+      'await reporter.onEvent({protocolMajor: 1, timestamp: 1, type: "run:finish", result: {status: "passed"}});',
+      "process.stdout.write(chunks.join(\"\"));"
+    ].join("\n")], {cwd: fixture})
+    assert.deepEqual(JSON.parse(reporterProbe.stdout), {status: "passed"})
     const physicalCopy = path.join(fixture, "physical-copy")
     await cp(installedPackage, physicalCopy, {recursive: true})
     const compatibleCopies = await exec("node", ["--input-type=module", "--eval", [
@@ -408,6 +435,9 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     assert.match(cli.stdout, new RegExp(`^✓ standalone selected by line ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(cli.stdout, new RegExp(`^✓ standalone not selected by line ${TEST_DURATION_PATTERN}$`, "mu"))
     assert.match(cli.stdout, /2 passed, 0 failed, 2 total/)
+    const jsonCli = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["--reporter", "json"], {cwd: fixture})
+    assert.equal(jsonCli.stderr, "")
+    assert.deepEqual(JSON.parse(jsonCli.stdout).counts, {total: 2, passed: 2, failed: 0, skipped: 0})
     const locationProbe = await exec("node", ["--input-type=module", "--eval", [
       'import {runNodeTests} from "@velocious/testing/node";',
       'const result = await runNodeTests({candidates: ["tests/smoke.test.js"]});',

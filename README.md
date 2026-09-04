@@ -103,6 +103,7 @@ Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, a
 npx velocious-test
 npx velocious-test tests/unit.test.js tests/api.test.js:42
 npx velocious-test --include-tag unit --exclude-tag slow --example "adds" --setup tests/setup.js
+npx velocious-test --reporter json
 ```
 
 Each test result line includes its execution time:
@@ -115,13 +116,15 @@ Each test result line includes its execution time:
 
 Durations below one second use integer milliseconds; longer durations use seconds with millisecond precision. Retried tests sum every attempt, while tests blocked by suite setup are reported as not run.
 
-Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` set run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
+Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` set run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. `--reporter default` explicitly selects the existing human output. `--reporter json` writes one compact, newline-terminated run result to stdout without human result lines or summaries. The executable reserves stdout for that document and routes other stdout writes, including live console output and separately constructed consoles, to stderr for the remainder of the process. Startup failures are reported to stderr immediately even if imported code keeps the event loop active. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
 
 ## Public API
 
 The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, `test`, `fit`, `xit`, `xtest`, all four lifecycle hooks, `expect`, `Expect`, `PromiseExpectation`, `anything`, `any`, `arrayContaining`, `objectContaining`, `stringContaining`, `stringMatching`, `waitForEvent`, `mock`, `createMockScope()`, `createFakeTimers()`, `configureTests`, `CONTEXT_SCHEMA_VERSION`, `defaultTestContext`, `createTestContext()`, and `installGlobals()`. The expectation API provides `not`, `resolves`, `rejects`, `extend`, `toBe`, `toEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeCloseTo`, `toHaveLength`, `toBeDefined`, `toBeInstanceOf`, `toBeFalse`, `toBeNull`, `toBeUndefined`, `toBeTrue`, `toBeTruthy`, `toContain`, `toContainEqual`, `toInclude`, `toMatch`, `toMatchObject`, `toThrow`, `toThrowError`, `toHaveAttributes`, the five mock call matchers, and `toChange`/`andChange` expectations. Throw matchers recognize arbitrary thrown or rejected JavaScript values, including falsy values; regular-expression matching is repeatable and does not change a caller-owned expression's `lastIndex`.
 
 `@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Its timeout deadlines and cleanup grace use captured real timers and a captured monotonic clock, with oversized deadlines scheduled in host-supported chunks, so installing the package's fake timers cannot pause or advance runner bookkeeping. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, `suiteHookExecutor`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
+
+`@velocious/testing/reporters` exports the browser-safe `createJsonReporter({write})`. It ignores intermediate events and awaits one `write(JSON.stringify(event.result) + "\n")` for each `run:finish`; writer and serialization failures propagate through the runner's awaited reporter contract. The writer owns the destination, so this shared reporter has no Node stream or process dependency. See [Reporters](docs/reporters.md) for the programmatic and CLI contracts.
 
 Run results keep executed and setup-blocked records in `tests` and add explicit declared non-runs in `nonRunTests` with `skipped` or `todo` status. Each matched explicit non-run emits `test:skip`. `counts.total` remains the number of runnable selected tests, while `counts.skipped` includes filtered declarations and declared non-runs exactly once. A selection matching only explicit skips or todos has `noMatches: false` and succeeds when no other error occurs.
 
@@ -163,7 +166,7 @@ See [Architecture](docs/architecture.md) for dependency direction and deferred s
 
 ## Node support
 
-Node 20, 22, and 24 are supported. The root and runner entries contain no Node built-ins; only `@velocious/testing/node` and `velocious-test` require Node.
+Node 20, 22, and 24 are supported. The root, runner, and reporters entries contain no Node built-ins; only `@velocious/testing/node` and `velocious-test` require Node.
 
 Published source and declaration maps resolve to source files included for debugging. The explicit package export map remains authoritative: shipped `src/` files are not public subpath exports.
 
