@@ -299,6 +299,20 @@ test("generated fake timer declarations expose the bounded root contract", async
   ], {cwd: process.cwd()})
 })
 
+test("generated cleanup declarations expose the callback contract", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/test-cleanup.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("generated matcher declarations expose promise, asymmetric, and extensible custom contracts", async () => {
   await exec(path.resolve("node_modules/.bin/tsc"), [
     "--ignoreConfig",
