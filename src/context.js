@@ -251,11 +251,11 @@ function declareSuite(context, name, arg1, arg2, state = "run", focused = false,
 /** @param {InternalTestContext} context @param {string} kind @param {any[]} rows @returns {TestDeclarationFunction} */
 function testEach(context, kind, rows) {
   validateRows(kind, rows)
+  const location = context._declarationLocator()
   return (name, arg1, arg2) => {
     if (typeof name !== "string") throw new Error(`${kind}.each name must be a string`)
     validateTableTemplate(name)
     requiredCallback("it", name, arg1, arg2)
-    const location = context._declarationLocator()
     rows.forEach((row, rowIndex) => {
       declareTest(context, interpolateTableName(name, row, rowIndex), arg1, arg2, "run", false, location, rowArguments(row))
     })
@@ -265,11 +265,11 @@ function testEach(context, kind, rows) {
 /** @param {InternalTestContext} context @param {string} kind @param {any[]} rows @returns {SuiteDeclarationFunction} */
 function suiteEach(context, kind, rows) {
   validateRows(kind, rows)
+  const location = context._declarationLocator()
   return (name, arg1, arg2) => {
     if (typeof name !== "string") throw new Error(`${kind}.each name must be a string`)
     validateTableTemplate(name)
     requiredCallback("describe", name, arg1, arg2)
-    const location = context._declarationLocator()
     /** @type {Promise<any> | undefined} */
     let pending
     rows.forEach((row, rowIndex) => {

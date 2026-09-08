@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 import {pathToFileURL} from "node:url"
 
-import {createTestContext} from "../src/index.js"
+import {createTestContext, defaultTestContext} from "../src/index.js"
 import {discoverTestFiles, parseCliArguments, parsePathLine, runNodeTests} from "../src/node/index.js"
 
 function deferred() {
@@ -112,6 +112,101 @@ test("runNodeTests attributes generated table declarations to each callsites", a
       "locations suite 0 first child",
       "locations suite 1 second child"
     ])
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+for (const kind of ["it", "test"]) {
+  test(`runNodeTests selects stored ${kind}.each rows by the builder line instead of invocation lines`, async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-stored-tests-"))
+    const packageEntry = pathToFileURL(path.resolve("src/index.js")).href
+    try {
+      const testPath = path.join(root, "stored.test.mjs")
+      await writeFile(testPath, [
+        `import {describe, expect, it, test} from ${JSON.stringify(packageEntry)}`,
+        `const cases = ${kind}.each([[1, 2], [2, 4]])`,
+        'describe("stored", () => {',
+        '  cases("case %d", {tags: "table"}, (value, doubled) => expect(value * 2).toEqual(doubled))',
+        '  cases("reused %d", (value, doubled) => expect(value * 2).toEqual(doubled))',
+        '  it.each([[3, 6], [4, 8]])("inline %d", (value, doubled) => expect(value * 2).toEqual(doubled))',
+        '  it("sibling", () => { throw new Error("sibling was selected") })',
+        '})'
+      ].join("\n"))
+
+      const selected = await runNodeTests({cwd: root, candidates: [`${testPath}:2`]})
+      assert.deepEqual(selected.tests.map((entry) => entry.fullName), [
+        "stored case 1", "stored case 2", "stored reused 1", "stored reused 2"
+      ])
+      assert.equal(selected.status, "passed")
+      assert.deepEqual(selected.counts, {total: 4, passed: 4, failed: 0, skipped: 3})
+      for (const entry of selected.tests) assert.deepEqual(entry.location, {filePath: testPath, line: 2})
+      assert.deepEqual(defaultTestContext.registry.suites[0].tests.map((entry) => entry.location.line), [2, 2, 2, 2, 6, 6, 7])
+
+      for (const line of [4, 5]) {
+        const invocation = await runNodeTests({cwd: root, candidates: [`${testPath}:${line}`]})
+        assert.equal(invocation.noMatches, true)
+        assert.equal(invocation.status, "failed")
+        assert.deepEqual(invocation.tests, [])
+      }
+
+      const inline = await runNodeTests({cwd: root, candidates: [`${testPath}:6`]})
+      assert.deepEqual(inline.tests.map((entry) => entry.fullName), ["stored inline 3", "stored inline 4"])
+      assert.equal(inline.status, "passed")
+      assert.deepEqual(inline.counts, {total: 2, passed: 2, failed: 0, skipped: 5})
+      for (const entry of inline.tests) assert.deepEqual(entry.location, {filePath: testPath, line: 6})
+    } finally {
+      await rm(root, {recursive: true, force: true})
+    }
+  })
+}
+
+test("runNodeTests selects stored describe.each children through the suite builder line", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-stored-suites-"))
+  const packageEntry = pathToFileURL(path.resolve("src/index.js")).href
+  try {
+    const testPath = path.join(root, "stored.test.mjs")
+    await writeFile(testPath, [
+      `import {describe, expect, it} from ${JSON.stringify(packageEntry)}`,
+      'const suites = describe.each([[1, 2], [2, 4]])',
+      'describe("stored", () => {',
+      '  suites("suite %d", {tags: "table"}, (value, doubled) => {',
+      '    it("child", () => expect(value * 2).toEqual(doubled))',
+      '  })',
+      '  describe.each([[3, 6], [4, 8]])("inline %d", (value, doubled) => {',
+      '    it("direct child", () => expect(value * 2).toEqual(doubled))',
+      '  })',
+      '  describe("sibling", () => it("excluded", () => { throw new Error("sibling was selected") }))',
+      '})'
+    ].join("\n"))
+
+    const selected = await runNodeTests({cwd: root, candidates: [`${testPath}:2`]})
+    assert.deepEqual(selected.tests.map((entry) => entry.fullName), ["stored suite 1 child", "stored suite 2 child"])
+    assert.equal(selected.status, "passed")
+    assert.deepEqual(selected.counts, {total: 2, passed: 2, failed: 0, skipped: 3})
+    for (const entry of selected.tests) assert.deepEqual(entry.location, {filePath: testPath, line: 5})
+    const suites = defaultTestContext.registry.suites[0].suites
+    assert.deepEqual(suites.map((entry) => entry.location), [
+      {filePath: testPath, line: 2}, {filePath: testPath, line: 2},
+      {filePath: testPath, line: 7}, {filePath: testPath, line: 7},
+      {filePath: testPath, line: 10}
+    ])
+    for (const suite of suites.slice(0, 2)) assert.deepEqual(suite.tests[0].location, {filePath: testPath, line: 5})
+
+    const invocation = await runNodeTests({cwd: root, candidates: [`${testPath}:4`]})
+    assert.equal(invocation.noMatches, true)
+    assert.equal(invocation.status, "failed")
+    assert.deepEqual(invocation.tests, [])
+
+    const child = await runNodeTests({cwd: root, candidates: [`${testPath}:5`]})
+    assert.deepEqual(child.tests.map((entry) => entry.fullName), ["stored suite 1 child", "stored suite 2 child"])
+    assert.equal(child.counts.passed, 2)
+
+    const inline = await runNodeTests({cwd: root, candidates: [`${testPath}:7`]})
+    assert.deepEqual(inline.tests.map((entry) => entry.fullName), ["stored inline 3 direct child", "stored inline 4 direct child"])
+    assert.equal(inline.status, "passed")
+    assert.deepEqual(inline.counts, {total: 2, passed: 2, failed: 0, skipped: 3})
+    for (const entry of inline.tests) assert.deepEqual(entry.location, {filePath: testPath, line: 8})
   } finally {
     await rm(root, {recursive: true, force: true})
   }
