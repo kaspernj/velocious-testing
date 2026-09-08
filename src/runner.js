@@ -10,6 +10,7 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
 /** @typedef {import("./context.js").SuiteDeclaration} SuiteDeclaration */
 /** @typedef {import("./context.js").TestDeclaration} TestDeclaration */
 /** @typedef {{name: string, message: string, stack?: string, cause?: TestErrorRecord, errors?: TestErrorRecord[], terminalResource?: TerminalResource}} TestErrorRecord */
+/** @typedef {{name: string, message: string, stack?: string, cause?: unknown, errors?: unknown, terminalResource?: unknown}} ErrorLike */
 /** @typedef {{scope: "run", name: string}} TerminalResource */
 /** @typedef {{fullName: string, error: TestErrorRecord}} TerminalFailure */
 /** @typedef {{attemptNumber: number, durationMs: number, consoleOutput: string, error?: TestErrorRecord}} TestAttemptResult */
@@ -72,28 +73,39 @@ const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug"]
 const MAX_HOST_TIMER_DELAY = 2_147_483_647
 
 /**
- * Reads the explicit, framework-independent terminal resource contract.
+ * Narrows thrown errors structurally so another realm retains its causal data.
  * @param {unknown} error Thrown value at the runner boundary.
+ * @returns {error is ErrorLike}
+ */
+function isErrorLike(error) {
+  return typeof error === "object" && error !== null &&
+    "name" in error && typeof error.name === "string" &&
+    "message" in error && typeof error.message === "string" &&
+    (!("stack" in error) || error.stack === undefined || typeof error.stack === "string")
+}
+
+/**
+ * Reads the explicit, framework-independent terminal resource contract.
+ * @param {ErrorLike} error Structurally narrowed error.
  * @returns {TerminalResource | undefined}
  */
 function terminalResource(error) {
-  if (!(error instanceof Error) || !("terminalResource" in error)) return undefined
   const resource = error.terminalResource
   if (!resource || typeof resource !== "object" || !("scope" in resource) || !("name" in resource)) return undefined
   if (resource.scope !== "run" || typeof resource.name !== "string" || !resource.name) return undefined
   return {scope: "run", name: resource.name}
 }
 
-/** @param {unknown} error @param {Set<Error>} [ancestors] @returns {TestErrorRecord} */
+/** @param {unknown} error @param {Set<ErrorLike>} [ancestors] @returns {TestErrorRecord} */
 function errorRecord(error, ancestors = new Set()) {
-  if (!(error instanceof Error)) return {name: "Error", message: String(error)}
+  if (!isErrorLike(error)) return {name: "Error", message: String(error)}
   if (ancestors.has(error)) return {name: error.name, message: "[Circular error reference]"}
   const nextAncestors = new Set(ancestors)
   nextAncestors.add(error)
   /** @type {TestErrorRecord} */
   const record = {name: error.name, message: error.message, stack: error.stack}
   if (error.cause !== undefined) record.cause = errorRecord(error.cause, nextAncestors)
-  if (error instanceof AggregateError) record.errors = error.errors.map((child) => errorRecord(child, nextAncestors))
+  if (Array.isArray(error.errors)) record.errors = error.errors.map((child) => errorRecord(child, nextAncestors))
   const resource = terminalResource(error)
   if (resource) record.terminalResource = resource
   return record
@@ -118,7 +130,7 @@ function aggregateFailures(primary, cleanupFailures, label) {
   if (failures.length === 0) return {failed: false}
   if (failures.length === 1) return {failed: true, error: failures[0]}
   const message = primary.failed ?
-    primary.error instanceof Error ? primary.error.message : String(primary.error) :
+    isErrorLike(primary.error) ? primary.error.message : String(primary.error) :
     `Multiple ${label} failures`
   return {failed: true, error: new AggregateError(failures, message, primary.failed ? {cause: primary.error} : undefined)}
 }
@@ -538,10 +550,22 @@ export class TestRunner {
     const record = {fullName: entry.fullName, status: "failed", attempts: [], location: entry.test.location, tags: entry.test.tags}
     await this.emit({type: "test:start", fullName: entry.fullName})
     for (let attemptNumber = 1; attemptNumber <= retries + 1; attemptNumber += 1) {
-      const argsValue = await this.testArgumentResolver({context: this.context, suite: entry.suite, test: entry.test, attemptNumber})
-      const args = Array.isArray(argsValue) ? argsValue : [argsValue]
+      /** @type {FailureState} */
+      let resolution = {failed: false}
+      /** @type {Awaited<ReturnType<TestArgumentResolver>> | undefined} */
+      let argsValue
+      try {
+        argsValue = await this.testArgumentResolver({context: this.context, suite: entry.suite, test: entry.test, attemptNumber})
+      } catch (error) {
+        // Ordinary collaborator failures retain their existing run rejection.
+        // Terminal failures use the attempt's normal result/event completion.
+        if (!hasTerminalResource(errorRecord(error))) throw error
+        resolution = {failed: true, error}
+      }
       const startedAt = realMonotonicNow()
       const captured = await captureConsole(async () => {
+        if (resolution.failed) throw resolution.error
+        const args = Array.isArray(argsValue) ? argsValue : [argsValue]
         const input = {context: this.context, suite: entry.suite, test: entry.test, attemptNumber, beforeEach, afterEach, args, timeoutMs, fullName: entry.fullName}
         let defaultInvoked = false
         const execution = Promise.resolve(this.attemptExecutor({...input, defaultExecute: () => {

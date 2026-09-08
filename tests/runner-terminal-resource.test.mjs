@@ -4,9 +4,65 @@ import {spawnSync} from "node:child_process"
 import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {pathToFileURL} from "node:url"
+import {runInNewContext} from "node:vm"
 
 import {createTestContext} from "../src/index.js"
 import {TestRunner} from "../src/runner.js"
+
+test("cross-realm terminal errors preserve primary identity and causal stacks through cleanup", async () => {
+  const context = createTestContext()
+  const primary = runInNewContext(`Object.assign(new Error("foreign primary", {cause: new Error("foreign cause")}), {
+    terminalResource: {scope: "run", name: "shared-session"}
+  })`)
+  assert.equal(primary instanceof Error, false)
+  const originalStack = primary.stack
+  const originalCause = primary.cause
+  const cleanup = new Error("secondary cleanup")
+  const calls = []
+  let observedPrimary
+  context.describe("foreign owner", () => {
+    context.afterEach(() => { calls.push("afterEach"); throw cleanup })
+    context.afterAll(() => calls.push("afterAll"))
+    context.it("origin", {retries: 2}, () => { calls.push("origin"); throw primary })
+    context.it("later", () => calls.push("later"))
+  })
+  const runner = new TestRunner({context, attemptExecutor: async ({defaultExecute}) => {
+    try { await defaultExecute() } catch (error) { observedPrimary = error.cause; throw error }
+  }})
+  const result = await runner.run()
+  await runner.cleanupActiveSuites()
+  assert.deepEqual(calls, ["origin", "afterEach", "afterAll"])
+  assert.equal(observedPrimary, primary)
+  assert.equal(primary.stack, originalStack)
+  assert.equal(primary.cause, originalCause)
+  assert.deepEqual(result.counts, {total: 2, passed: 0, failed: 1, skipped: 0, notRun: 1})
+  assert.equal(result.tests[0].attempts.length, 1)
+  assert.equal(result.tests[0].error.message, primary.message)
+  assert.equal(result.tests[0].error.cause.stack, originalStack)
+  assert.equal(result.tests[0].error.cause.cause.stack, originalCause.stack)
+  assert.equal(result.tests[0].error.errors[1].stack, cleanup.stack)
+  assert.equal(result.terminalFailure.error, result.tests[0].error)
+  assert.equal(result.nonRunTests[0].reason, result.terminalFailure)
+})
+
+test("cross-realm aggregate members carry the terminal contract without a same-realm cause", async () => {
+  const context = createTestContext()
+  const primary = runInNewContext(`new AggregateError([
+    Object.assign(new Error("foreign member"), {terminalResource: {scope: "run", name: "shared-session"}})
+  ], "foreign aggregate")`)
+  assert.equal(primary instanceof AggregateError, false)
+  const calls = []
+  context.describe("foreign aggregate", () => {
+    context.it("origin", {retries: 1}, () => { calls.push("origin"); throw primary })
+    context.it("later", () => calls.push("later"))
+  })
+  const result = await new TestRunner({context}).run()
+  assert.deepEqual(calls, ["origin"])
+  assert.equal(result.tests[0].error.stack, primary.stack)
+  assert.equal(result.tests[0].error.errors[0].stack, primary.errors[0].stack)
+  assert.equal(result.tests[0].error.errors[0].terminalResource.name, "shared-session")
+  assert.equal(result.counts.notRun, 1)
+})
 
 test("aggregation preserves the original aggregate stack, cause and terminal contract", async () => {
   const context = createTestContext()
