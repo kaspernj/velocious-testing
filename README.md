@@ -204,7 +204,7 @@ Published source and declaration maps resolve to source files included for debug
 
 ## Development
 
-The canonical source-independent Ubuntu 26.04/Node 24 environment uses the root `Dockerfile` and `compose.yml`. It runs as UID/GID 1000 and binds the complete development home; the image does not copy source or install package dependencies. Retained provider CLIs stay unversioned, while native Qwen Code is owner-pinned to 0.23.3.
+The canonical source-independent Ubuntu 26.04/Node 24 environment uses the root `Dockerfile` and `compose.yml`. It runs as UID/GID 1000 and binds the complete development home; the image does not copy source or install package dependencies. Retained provider CLIs stay unversioned, while native Qwen Code is owner-pinned to 0.23.3. See [the development environment contract](docs/development-environment.md).
 
 ```sh
 cp .env.example .env

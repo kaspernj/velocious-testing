@@ -37,6 +37,9 @@ const compose = fs.readFileSync(new URL("../compose.yml", import.meta.url), "utf
 const problems = verifyDockerContract(dockerfile, compose)
 if (verifyDockerContract(`${dockerfile}\nCOPY package.json .`, compose).length === problems.length) problems.push("negative COPY probe")
 if (verifyDockerContract(dockerfile, `${compose}\n    ports: [\"3000:3000\"]`).length === problems.length) problems.push("negative ports probe")
+if (!verifyDockerContract(dockerfile.replace('    "@qwen-code/qwen-code@0.23.3" \\\n', ""), compose).some(problem => /pinned Qwen Code/u.test(problem))) problems.push("negative Qwen pin probe")
+if (!verifyDockerContract(dockerfile.replace('test "$(qwen --version)" = "0.23.3"', "qwen --version"), compose).some(problem => /exact Qwen Code/u.test(problem))) problems.push("negative Qwen version probe")
+if (!verifyDockerContract(dockerfile.replace("@qwen-code/audio-capture,", ""), compose).some(problem => /audio-capture/u.test(problem))) problems.push("negative Qwen audio-capture probe")
 if (problems.length) {
   console.error(`Docker development contract violations:\n- ${problems.join("\n- ")}`)
   process.exitCode = 1
