@@ -12,7 +12,7 @@ The default context protocol major is public compatibility state. Changes to its
 
 Use ESM and checked JavaScript/JSDoc. Generated `build/` files come only from `npm run build`; never edit them directly. Add behavior tests before implementation and execute the focused RED before GREEN. Keep dependencies minimal and never add a CommonJS build.
 
-All final package commands run inside the canonical Compose `dev` service. The source-independent image mounts the complete `${DEV_HOME_PATH:-/home/dev}` at `/home/dev`, runs as UID/GID 1000, and installs no repository dependencies while building.
+All final package commands run inside the canonical Compose `dev` service. The source-independent image mounts the complete `${DEV_HOME_PATH:-/home/dev}` at `/home/dev`, runs as UID/GID 1000, and installs no repository dependencies while building. The image retains the unversioned provider CLIs and also installs owner-pinned native Qwen Code 0.23.3; Threadwire remains runtime-only.
 
 Before handoff run `npm ci`, `npm run lint`, `npm run typecheck`, `npm test`, package/bundle/standalone checks, `npm run verify:docker-dev-environment`, `docker compose config`, and `git diff --check`. TensorBuzz owns CI validation; do not add GitHub Actions workflows. Releases use `npm run release:patch`; do not manually version, publish, commit, or push unless explicitly authorized.
 

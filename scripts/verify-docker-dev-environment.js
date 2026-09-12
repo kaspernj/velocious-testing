@@ -5,6 +5,7 @@ import fs from "node:fs"
 const BASE_DIGEST = "sha256:3131b4cc82a783df6c9df078f86e01819a13594b865c2cad47bd1bca2b7063bb"
 const REQUIRED_TOOLS = ["bash", "curl", "git", "gh", "gnupg", "jq", "ripgrep", "fd-find", "fzf", "bat", "vim-tiny", "unzip", "rsync", "patch", "procps", "lsof", "iproute2", "dnsutils", "tini", "python3", "sqlite3", "shellcheck", "tmux", "zsh", "build-essential"]
 const PROVIDER_PACKAGES = ["@moonshot-ai/kimi-code", "@openai/codex", "@anthropic-ai/claude-code", "opencode-ai"]
+const QWEN_CODE_SPEC = "@qwen-code/qwen-code@0.23.3"
 
 /** @param {string} dockerfile @param {string} compose @returns {string[]} */
 export function verifyDockerContract(dockerfile, compose) {
@@ -19,7 +20,10 @@ export function verifyDockerContract(dockerfile, compose) {
     if (!dockerfile.includes(`    "${packageName}"`)) problems.push(`unversioned CLI ${packageName}`)
     if (dockerfile.includes(`${packageName}@`)) problems.push(`version-pinned CLI ${packageName}`)
   }
-  for (const command of ["kimi", "codex", "claude", "opencode"]) if (!dockerfile.includes(`${command} --version`)) problems.push(`CLI probe ${command}`)
+  if (!dockerfile.includes(`"${QWEN_CODE_SPEC}"`)) problems.push(`pinned Qwen Code ${QWEN_CODE_SPEC}`)
+  if (!dockerfile.includes('test "$(qwen --version)" = "0.23.3"')) problems.push("exact Qwen Code 0.23.3 probe")
+  if (!dockerfile.includes("@qwen-code/audio-capture")) problems.push("Qwen audio-capture lifecycle allowlist")
+  for (const command of ["kimi", "codex", "claude", "opencode", "qwen"]) if (!dockerfile.includes(`${command} --version`)) problems.push(`CLI probe ${command}`)
   if (!/^name: velocious-testing$/mu.test(compose)) problems.push("Compose project name")
   if (!compose.includes("source: ${DEV_HOME_PATH:-/home/dev}") || !compose.includes("target: /home/dev")) problems.push("complete development-home bind")
   if ((compose.match(/type: bind/gu) || []).length !== 1) problems.push("exactly one bind")
@@ -33,6 +37,9 @@ const compose = fs.readFileSync(new URL("../compose.yml", import.meta.url), "utf
 const problems = verifyDockerContract(dockerfile, compose)
 if (verifyDockerContract(`${dockerfile}\nCOPY package.json .`, compose).length === problems.length) problems.push("negative COPY probe")
 if (verifyDockerContract(dockerfile, `${compose}\n    ports: [\"3000:3000\"]`).length === problems.length) problems.push("negative ports probe")
+if (!verifyDockerContract(dockerfile.replace('    "@qwen-code/qwen-code@0.23.3" \\\n', ""), compose).some(problem => /pinned Qwen Code/u.test(problem))) problems.push("negative Qwen pin probe")
+if (!verifyDockerContract(dockerfile.replace('test "$(qwen --version)" = "0.23.3"', "qwen --version"), compose).some(problem => /exact Qwen Code/u.test(problem))) problems.push("negative Qwen version probe")
+if (!verifyDockerContract(dockerfile.replace("@qwen-code/audio-capture,", ""), compose).some(problem => /audio-capture/u.test(problem))) problems.push("negative Qwen audio-capture probe")
 if (problems.length) {
   console.error(`Docker development contract violations:\n- ${problems.join("\n- ")}`)
   process.exitCode = 1
