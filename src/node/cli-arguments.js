@@ -55,7 +55,9 @@ function splitTags(value) {
 /** @param {string} name @param {string} value @returns {number} */
 function nonNegativeInteger(name, value) {
   if (!/^(?:0|[1-9]\d*)$/u.test(value)) throw new Error(`${name} must be a non-negative integer`)
-  return Number(value)
+  const number = Number(value)
+  if (!Number.isSafeInteger(number)) throw new Error(`${name} must be a non-negative integer`)
+  return number
 }
 
 /** @param {string} name @param {string} value @returns {number} */

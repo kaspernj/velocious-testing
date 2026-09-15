@@ -90,9 +90,108 @@ let importSequence = 0
  */
 /** @typedef {import("../runner.js").TestRunResult & {files: string[], focused: boolean, timingManifestCoverage?: TimingManifestCoverage}} RunNodeTestResult */
 
-/** @param {import("../context.js").SuiteDeclaration[]} suites @returns {boolean} */
-function hasFocusedDeclarations(suites) {
-  return suites.some((suite) => suite.focus || suite.tests.some((test) => test.focus) || hasFocusedDeclarations(suite.suites))
+/**
+ * @param {import("../context.js").SuiteDeclaration[]} suites
+ * @param {boolean} [ancestorFocused]
+ * @returns {boolean}
+ */
+function hasFocusedDeclarations(suites, ancestorFocused = false) {
+  return suites.some((suite) => {
+    const focused = ancestorFocused || suite.focus
+    return suite.tests.some((test) => test.state === "run" && (focused || test.focus)) ||
+      hasFocusedDeclarations(suite.suites, focused)
+  })
+}
+
+/** @param {TestLineFilters[]} sources @returns {TestLineFilters} */
+function mergeLineFilters(sources) {
+  /** @type {TestLineFilters} */
+  const merged = {}
+  for (const source of sources) {
+    for (const [filePath, sourceLines] of Object.entries(source)) {
+      const lines = merged[filePath] ||= []
+      for (const line of sourceLines) {
+        if (!lines.includes(line)) lines.push(line)
+      }
+      lines.sort((lineA, lineB) => lineA - lineB)
+    }
+  }
+  return merged
+}
+
+/**
+ * @param {import("./test-profiler.js").default} profiler
+ * @param {import("../context.js").SuiteDeclaration[]} lineage
+ * @param {WeakMap<object, string>} declarationOwnerPaths
+ * @returns {string | undefined}
+ */
+function profileScopeId(profiler, lineage, declarationOwnerPaths) {
+  /** @type {string | undefined} */
+  let parentId
+  const descriptions = []
+  for (const suite of lineage) {
+    descriptions.push(suite.name)
+    parentId = profiler.scopeId(suite, {
+      descriptions: [...descriptions],
+      filePath: declarationOwnerPaths.get(suite) ?? suite.location.filePath,
+      line: suite.location.line,
+      parentId
+    })
+  }
+  return parentId
+}
+
+/**
+ * Instruments the existing lifecycle callbacks without reimplementing their ordering, cleanup, or timeout behavior.
+ * @param {import("../context.js").SuiteDeclaration[]} suites
+ * @param {import("./test-profiler.js").default} profiler
+ * @param {WeakMap<object, string>} declarationOwnerPaths
+ * @param {import("../context.js").SuiteDeclaration[]} [ancestors]
+ * @returns {() => void}
+ */
+function instrumentProfileLifecycle(suites, profiler, declarationOwnerPaths, ancestors = []) {
+  /** @type {Array<() => void>} */
+  const restorations = []
+  for (const suite of suites) {
+    const lineage = [...ancestors, suite]
+    for (const phase of /** @type {const} */ (["beforeAll", "beforeEach", "afterEach", "afterAll"])) {
+      for (const [declarationIndex, hook] of suite.hooks[phase].entries()) {
+        const callback = hook.callback
+        /** @type {import("../context.js").LifecycleCallback} */
+        const instrumented = (...args) => {
+          return profiler.runSpan({
+            phase,
+            declarationIndex,
+            declarationScopeId: profileScopeId(profiler, lineage, declarationOwnerPaths),
+            filePath: declarationOwnerPaths.get(hook) ?? declarationOwnerPaths.get(suite) ?? hook.location.filePath
+          }, () => callback(...args))
+        }
+        hook.callback = instrumented
+        restorations.push(() => {
+          if (hook.callback === instrumented) hook.callback = callback
+        })
+      }
+    }
+    for (const test of suite.tests) {
+      const callback = test.callback
+      /** @type {import("../context.js").LifecycleCallback} */
+      const instrumented = (...args) => {
+        return profiler.runSpan({
+          phase: "test body",
+          filePath: declarationOwnerPaths.get(test) ?? declarationOwnerPaths.get(suite) ?? test.location.filePath
+        }, () => callback(...args))
+      }
+      test.callback = instrumented
+      restorations.push(() => {
+        if (test.callback === instrumented) test.callback = callback
+      })
+    }
+    const restoreNested = instrumentProfileLifecycle(suite.suites, profiler, declarationOwnerPaths, lineage)
+    restorations.push(restoreNested)
+  }
+  return () => {
+    for (const restore of restorations.reverse()) restore()
+  }
 }
 
 /** @param {string | undefined} ownerFilePath @returns {{filePath?: string, line?: number}} */
@@ -136,80 +235,98 @@ export async function runNodeTests(options = {}) {
   /** @type {string | undefined} */
   let ownerFilePath
   context.setDeclarationLocator(() => captureDeclarationLocation(ownerFilePath))
-
-  for (const setup of options.setupFiles || []) {
-    const setupPath = path.resolve(cwd, parsePathLine(setup).path)
-    ownerFilePath = setupPath
-    if (profiler) {
-      await profiler.measurePhase("testing config/global setup", async () => await importer(setupPath), {filePath: setupPath})
-    } else {
-      await importer(ownerFilePath)
-    }
+  /** @type {WeakMap<object, string>} */
+  const declarationOwnerPaths = new WeakMap()
+  /** @param {{declaration?: object}} event */
+  const rememberDeclarationOwner = (event) => {
+    if (ownerFilePath && event.declaration) declarationOwnerPaths.set(event.declaration, ownerFilePath)
   }
+  context.events.on("declaration", rememberDeclarationOwner)
 
-  const lineFilters = {...lineFiltersFromCandidates({cwd, candidates: options.candidates}), ...(options.lineFilters || {})}
-  const discover = async () => await discoverTestFiles({
-    cwd,
-    candidates: options.candidates,
-    directories: options.directories,
-    filePattern: options.filePattern,
-    ignoredNames: options.ignoredNames
-  })
-  let files = profiler ? await profiler.measurePhase("discovery", discover) : await discover()
-  const timingManifest = options.timingManifest ?? await loadTimingManifest(options.timingManifestPath)
+  const lineFilters = mergeLineFilters([
+    lineFiltersFromCandidates({cwd, candidates: options.candidates}),
+    options.lineFilters || {}
+  ])
+  /** @type {string[]} */
+  let files = []
   /** @type {import("./test-suite-splitter.js").TimingManifestCoverage | undefined} */
   let timingManifestCoverage
-
-  if (profiler) {
-    const discoveredPaths = files.map((filePath) => profiler.safeSourcePath(filePath))
-    profiler.setSelection({
-      discoveredFileCount: files.length,
-      hasLineFilters: Object.keys(lineFilters).length > 0,
-      testFileSetHash: timingManifestFileSetHash(discoveredPaths)
-    })
-  }
-  if (options.groups !== undefined && options.groupNumber !== undefined) {
-    const splitter = new TestSuiteSplitter({
-      groups: options.groups,
-      groupNumber: options.groupNumber,
-      testFiles: files,
-      baseDirectory: cwd,
-      timingManifest
-    })
-    timingManifestCoverage = options.timingManifestPath ? splitter.getTimingManifestCoverage() : undefined
-    files = splitter.getGroupFiles()
-  }
-  profiler?.setSelection({fileCount: files.length})
-
-  for (const file of files) {
-    ownerFilePath = file
-    if (profiler) {
-      await profiler.measurePhase("imports", async () => await importer(file), {filePath: file})
-    } else {
-      await importer(file)
+  /** @param {string} filePath @param {"imports" | "testing config/global setup"} phase */
+  const importOwnedFile = async (filePath, phase) => {
+    ownerFilePath = filePath
+    try {
+      if (profiler) await profiler.measurePhase(phase, async () => await importer(filePath), {filePath})
+      else await importer(filePath)
+    } finally {
+      ownerFilePath = undefined
     }
   }
-  ownerFilePath = undefined
+
+  try {
+    for (const setup of options.setupFiles || []) {
+      const setupPath = path.resolve(cwd, parsePathLine(setup).path)
+      await importOwnedFile(setupPath, "testing config/global setup")
+    }
+
+    const discover = async () => await discoverTestFiles({
+      cwd,
+      candidates: options.candidates,
+      directories: options.directories,
+      filePattern: options.filePattern,
+      ignoredNames: options.ignoredNames
+    })
+    if (profiler) {
+      files = await profiler.measurePhase("discovery", discover)
+      const discoveredPaths = files.map((filePath) => profiler.safeSourcePath(filePath))
+      profiler.setSelection({
+        discoveredFileCount: files.length,
+        hasLineFilters: Object.keys(lineFilters).length > 0,
+        testFileSetHash: timingManifestFileSetHash(discoveredPaths)
+      })
+    } else {
+      files = await discover()
+    }
+    const timingManifest = options.timingManifest ?? await loadTimingManifest(options.timingManifestPath)
+    if (options.groups !== undefined && options.groupNumber !== undefined) {
+      const splitter = new TestSuiteSplitter({
+        groups: options.groups,
+        groupNumber: options.groupNumber,
+        testFiles: files,
+        baseDirectory: cwd,
+        timingManifest
+      })
+      timingManifestCoverage = options.timingManifestPath ? splitter.getTimingManifestCoverage() : undefined
+      files = splitter.getGroupFiles()
+    }
+    profiler?.setSelection({fileCount: files.length})
+
+    for (const file of files) await importOwnedFile(file, "imports")
+  } finally {
+    ownerFilePath = undefined
+    context.events.off("declaration", rememberDeclarationOwner)
+  }
   const examples = [
     ...normalizeExamplePatterns((options.examples || []).filter((example) => typeof example === "string")),
     ...(options.examples || []).filter((example) => example instanceof RegExp)
   ]
+  const restoreProfileLifecycle = profiler
+    ? instrumentProfileLifecycle(context.registry.suites, profiler, declarationOwnerPaths)
+    : () => {}
   const attemptExecutor = profiler ? async (/** @type {import("../runner.js").AttemptExecutorInput} */ input) => {
     const descriptions = input.fullName.endsWith(input.test.name)
       ? [input.fullName.slice(0, -input.test.name.length).trimEnd()]
       : [input.suite.name]
+    const ownerFilePath = declarationOwnerPaths.get(input.test) ?? declarationOwnerPaths.get(input.suite)
     const handle = profiler.startAttempt({
       descriptions,
       attemptNumber: input.attemptNumber,
-      testData: input.test,
+      testData: ownerFilePath ? {...input.test, ownerFilePath} : input.test,
       testDescription: input.test.name
     })
     try {
       await profiler.runAttempt(handle, async () => {
-        await profiler.runSpan({phase: "test body", filePath: input.test.location.filePath}, async () => {
-          if (options.attemptExecutor) await options.attemptExecutor(input)
-          else await input.defaultExecute()
-        })
+        if (options.attemptExecutor) await options.attemptExecutor(input)
+        else await input.defaultExecute()
       })
       profiler.finishAttempt(handle, "passed")
     } catch (error) {
@@ -218,44 +335,30 @@ export async function runNodeTests(options = {}) {
       throw error
     }
   } : options.attemptExecutor
-  const suiteHookExecutor = profiler ? async (/** @type {import("../runner.js").SuiteHookExecutorInput} */ input) => {
-    const hooks = input.suite.hooks[input.phase]
-    const declarationIndex = hooks.indexOf(input.hook)
-    const declarationScopeId = profiler.scopeId(input.suite, {
-      descriptions: [input.fullName],
-      filePath: input.suite.location.filePath,
-      line: input.suite.location.line
+  try {
+    const result = await runTests({
+      context,
+      includeTags: options.includeTags,
+      includeTagMode: options.includeTagMode,
+      excludeTags: options.excludeTags,
+      focusedTestsBypassIncludeTags: options.focusedTestsBypassIncludeTags,
+      ignoreFocus: options.ignoreFocus,
+      omitEmptySuiteNames: options.omitEmptySuiteNames,
+      examples,
+      lineFilters,
+      retries: options.retries,
+      timeoutMs: options.timeoutMs,
+      reporter: options.reporter,
+      attemptExecutor,
+      attemptExecutorOwnsTimeout: profiler && !options.attemptExecutor ? true : options.attemptExecutorOwnsTimeout,
+      testArgumentResolver: options.testArgumentResolver,
+      suiteHookExecutor: options.suiteHookExecutor
     })
-    await profiler.runSpan({
-      phase: input.phase,
-      declarationIndex,
-      declarationScopeId,
-      filePath: input.hook.location.filePath
-    }, async () => {
-      if (options.suiteHookExecutor) await options.suiteHookExecutor(input)
-      else await input.defaultExecute([])
-    })
-  } : options.suiteHookExecutor
-  const result = await runTests({
-    context,
-    includeTags: options.includeTags,
-    includeTagMode: options.includeTagMode,
-    excludeTags: options.excludeTags,
-    focusedTestsBypassIncludeTags: options.focusedTestsBypassIncludeTags,
-    ignoreFocus: options.ignoreFocus,
-    omitEmptySuiteNames: options.omitEmptySuiteNames,
-    examples,
-    lineFilters,
-    retries: options.retries,
-    timeoutMs: options.timeoutMs,
-    reporter: options.reporter,
-    attemptExecutor,
-    attemptExecutorOwnsTimeout: options.attemptExecutorOwnsTimeout,
-    testArgumentResolver: options.testArgumentResolver,
-    suiteHookExecutor
-  })
-  const focused = !options.ignoreFocus && hasFocusedDeclarations(context.registry.suites)
-  return {...result, files, focused, ...(timingManifestCoverage ? {timingManifestCoverage} : {})}
+    const focused = !options.ignoreFocus && hasFocusedDeclarations(context.registry.suites)
+    return {...result, files, focused, ...(timingManifestCoverage ? {timingManifestCoverage} : {})}
+  } finally {
+    restoreProfileLifecycle()
+  }
 }
 
 /** @returns {string} */

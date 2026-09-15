@@ -627,6 +627,7 @@ export default class TestProfiler {
    */
   finish({counts, focused, status}) {
     if (this._finishedProfile) return this._finishedProfile
+    this.interrupt()
 
     const totalDurationMs = roundProfileDuration(this.now() - this._startedAt)
     const totalCpuMs = this.cpuDuration(this._cpuStartedAt)

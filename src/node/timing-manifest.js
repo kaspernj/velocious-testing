@@ -152,7 +152,9 @@ function validatedProfileShard({profile, source}) {
   if (profile.schema !== "velocious.test-profile" || profile.schemaVersion !== 1) {
     throw new Error(`${source} has an incompatible Velocious test profile schema`)
   }
-  if (profile.status !== "passed") throw new Error(`${source} must have passed status for timing aggregation`)
+  if (profile.status !== "passed" && profile.status !== "no-tests") {
+    throw new Error(`${source} must have passed status for timing aggregation`)
+  }
   const selection = profile.selection
   assertJsonObject(selection, `${source} is missing test profile selection metadata`)
   assertCompleteSelection(selection, source)
@@ -167,6 +169,17 @@ function validatedProfileShard({profile, source}) {
   )
   const {pathBase, testFileSetHash} = validatedSelectionIdentity(selection, source)
   const timingManifest = validateTimingManifest(profile.timingManifest, {source: `${source} timing manifest`})
+  if (profile.status === "no-tests") {
+    const counts = profile.counts
+    const countNames = /** @type {const} */ (["discovered", "executed", "failed", "passed", "attempts"])
+    if (discoveredFileCount === 0 || fileCount !== 0 || Object.keys(timingManifest).length !== 0 ||
+        !counts || typeof counts !== "object" || Array.isArray(counts) ||
+        countNames.some((countName) => counts[countName] !== 0) ||
+        !Array.isArray(profile.files) || profile.files.length !== 0 ||
+        !Array.isArray(profile.tests) || profile.tests.length !== 0) {
+      throw new Error(`${source} no-tests status is only valid for an empty shard`)
+    }
+  }
   if (Object.keys(timingManifest).length !== fileCount) {
     throw new Error(`${source} timing manifest does not match its post-shard file count`)
   }

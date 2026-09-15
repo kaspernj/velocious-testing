@@ -48,11 +48,11 @@ export class TestSuiteSplitter {
     if (duration !== undefined && duration > 0) return duration
     const relativePath = this.heuristicRelativePath(filePath)
     let weight = DEFAULT_WEIGHT
-    const specDirMatch = relativePath.match(/^(?:(?:spec|__tests__|tests)\/)?([^/]+)\//u)
+    const specDirMatch = relativePath.match(/^(?:(?:spec|test|__tests__|tests)\/)?([^/]+)\//u)
     if (specDirMatch && DIRECTORY_WEIGHTS[specDirMatch[1]] !== undefined) {
       weight = DIRECTORY_WEIGHTS[specDirMatch[1]]
     }
-    if (filePath.endsWith(".browser-spec.js") || filePath.endsWith(".browser-spec.mjs")) {
+    if (/\.browser-spec\.(?:cjs|js|mjs)$/u.test(filePath)) {
       weight *= BROWSER_SPEC_MULTIPLIER
     }
     return weight

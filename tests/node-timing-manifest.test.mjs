@@ -28,12 +28,16 @@ function profile({
   pathBase = "configuration-directory",
   testFileSetHash = suiteHash,
   discoveredFileCount = 2,
-  fileCount = Object.keys(timingManifest || {}).length
+  fileCount = Object.keys(timingManifest || {}).length,
+  counts = {discovered: fileCount, executed: fileCount, failed: 0, passed: fileCount, attempts: fileCount}
 }) {
   return {
     schema: "velocious.test-profile",
     schemaVersion: 1,
     status,
+    counts,
+    files: [],
+    tests: [],
     selection: {
       discoveredFileCount,
       excludeTagCount,
@@ -86,6 +90,39 @@ describe("Node timing manifests", () => {
     ]), {"spec/a-spec.js": 10, "spec/b-spec.js": 20})
   })
 
+  it("accepts only structurally empty no-test shard profiles in a complete set", () => {
+    assert.deepEqual(mergeTestProfileTimingManifests([
+      {profile: profile({groupNumber: 3, groups: 3, timingManifest: {}, status: "no-tests", counts: {
+        discovered: 0, executed: 0, failed: 0, passed: 0, attempts: 0
+      }}), source: "shard-3.json"},
+      {profile: profile({groupNumber: 1, groups: 3, timingManifest: {"spec/a-spec.js": 10}}), source: "shard-1.json"},
+      {profile: profile({groupNumber: 2, groups: 3, timingManifest: {"spec/b-spec.js": 20}}), source: "shard-2.json"}
+    ]), {"spec/a-spec.js": 10, "spec/b-spec.js": 20})
+
+    assert.throws(() => mergeTestProfileTimingManifests([
+      {profile: {
+        ...profile({groupNumber: 3, groups: 3, timingManifest: {}, status: "no-tests", counts: {
+          discovered: 0, executed: 0, failed: 0, passed: 0, attempts: 0
+        }}),
+        tests: [{attempts: [{status: "interrupted"}]}]
+      }, source: "empty-with-history.json"},
+      {profile: profile({groupNumber: 1, groups: 3, timingManifest: {"spec/a-spec.js": 10}}), source: "shard-1.json"},
+      {profile: profile({groupNumber: 2, groups: 3, timingManifest: {"spec/b-spec.js": 20}}), source: "shard-2.json"}
+    ]), /empty shard/u)
+
+    for (const invalidEmptyProfile of [
+      profile({groupNumber: 1, timingManifest: {"spec/a-spec.js": 10}, status: "no-tests"}),
+      profile({groupNumber: 1, timingManifest: {}, status: "no-tests", counts: {
+        discovered: 0, executed: 0, failed: 1, passed: 0, attempts: 0
+      }})
+    ]) {
+      assert.throws(() => mergeTestProfileTimingManifests([
+        {profile: invalidEmptyProfile, source: "invalid-empty.json"},
+        {profile: profile({groupNumber: 2, timingManifest: {"spec/b-spec.js": 20}}), source: "shard-2.json"}
+      ]), /passed|empty shard/u)
+    }
+  })
+
   it("rejects malformed, failed, interrupted, no-test, focused, and filtered profiles", () => {
     const mutations = [
       null,
@@ -104,7 +141,7 @@ describe("Node timing manifests", () => {
       assert.throws(() => mergeTestProfileTimingManifests([
         {profile: invalidProfile, source: "shard-1.json"},
         {profile: profile({groupNumber: 2, timingManifest: {"spec/b-spec.js": 20}}), source: "shard-2.json"}
-      ]), /profile|schema|passed|focused|filtered/u)
+      ]), /profile|schema|passed|empty shard|focused|filtered/u)
     }
   })
 

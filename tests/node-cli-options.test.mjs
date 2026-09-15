@@ -78,4 +78,11 @@ describe("Node CLI options", () => {
     assert.equal(literal.test("adds two"), false)
     assert.equal(expression.test("WORKS very well"), true)
   })
+
+  it("rejects unsafe retry and timeout integers", () => {
+    for (const option of ["--retry", "--retries", "--timeout"]) {
+      assert.throws(() => parseCliArguments([`${option}=${"9".repeat(400)}`]), /non-negative integer/u)
+      assert.throws(() => parseCliArguments([option, String(Number.MAX_SAFE_INTEGER + 1)]), /non-negative integer/u)
+    }
+  })
 })

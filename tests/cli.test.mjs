@@ -328,11 +328,11 @@ it("runs deterministic standalone groups and rejects incomplete grouping options
   }
 })
 
-it("profiles two shards, merges them non-destructively, and reuses the timing manifest", async () => {
+it("profiles shards including an empty group, merges them non-destructively, and reuses the timing manifest", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-cli-profile-"))
   try {
     await mkdir(path.join(root, "spec"))
-    const profilePaths = [path.join(root, "profile-1.json"), path.join(root, "profile-2.json")]
+    const profilePaths = [1, 2, 3].map((groupNumber) => path.join(root, `profile-${groupNumber}.json`))
     const manifestPath = path.join(root, "timings.json")
     for (const name of ["a.test.mjs", "b.test.mjs"]) {
       await writeFile(path.join(root, "spec", name), [
@@ -340,20 +340,20 @@ it("profiles two shards, merges them non-destructively, and reuses the timing ma
         `describe(${JSON.stringify(name)}, () => it("passes", async () => {}))`
       ].join("\n"))
     }
-    for (const groupNumber of [1, 2]) {
+    for (const groupNumber of [1, 2, 3]) {
       const result = runCli(root, [
-        "--groups=2", `--group-number=${groupNumber}`,
+        "--groups=3", `--group-number=${groupNumber}`,
         `--profile-json=${profilePaths[groupNumber - 1]}`, "spec"
       ])
-      assert.equal(result.status, 0, result.stderr)
+      assert.equal(result.status, groupNumber === 3 ? 1 : 0, result.stderr)
       const profile = JSON.parse(await (await import("node:fs/promises")).readFile(profilePaths[groupNumber - 1], "utf8"))
       assert.equal(profile.schema, "velocious.test-profile")
       assert.equal(profile.schemaVersion, 1)
-      assert.equal(profile.status, "passed")
-      assert.deepEqual(profile.selection.shard, {groups: 2, groupNumber})
+      assert.equal(profile.status, groupNumber === 3 ? "no-tests" : "passed")
+      assert.deepEqual(profile.selection.shard, {groups: 3, groupNumber})
       assert.equal(profile.selection.discoveredFileCount, 2)
-      assert.equal(profile.selection.fileCount, 1)
-      assert.equal(Object.keys(profile.timingManifest).length, 1)
+      assert.equal(profile.selection.fileCount, groupNumber === 3 ? 0 : 1)
+      assert.equal(Object.keys(profile.timingManifest).length, groupNumber === 3 ? 0 : 1)
     }
 
     await writeFile(manifestPath, "existing output\n")
@@ -363,10 +363,10 @@ it("profiles two shards, merges them non-destructively, and reuses the timing ma
     assert.equal(await (await import("node:fs/promises")).readFile(manifestPath, "utf8"), "existing output\n")
 
     const merged = runCli(root, [
-      "timing-manifest:merge", `--output=${manifestPath}`, profilePaths[1], profilePaths[0]
+      "timing-manifest:merge", `--output=${manifestPath}`, profilePaths[2], profilePaths[1], profilePaths[0]
     ])
     assert.equal(merged.status, 0, merged.stderr)
-    assert.match(merged.stdout, /Merged 2 test profile shards/u)
+    assert.match(merged.stdout, /Merged 3 test profile shards/u)
     assert.deepEqual(Object.keys(JSON.parse(await (await import("node:fs/promises")).readFile(manifestPath, "utf8"))), [
       "spec/a.test.mjs", "spec/b.test.mjs"
     ])

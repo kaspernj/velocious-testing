@@ -681,16 +681,29 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
       ].join("\n"))
       profileTestPaths.push(testPath)
     }
-    const profilePaths = [path.join(fixture, "profile-1.json"), path.join(fixture, "profile-2.json")]
-    for (const groupNumber of [1, 2]) {
-      const grouped = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [
-        "--groups", "2", "--group-number", String(groupNumber),
+    const profilePaths = [1, 2, 3].map((groupNumber) => path.join(fixture, `profile-${groupNumber}.json`))
+    for (const groupNumber of [1, 2, 3]) {
+      const arguments_ = [
+        "--groups", "3", "--group-number", String(groupNumber),
         "--profile-json", profilePaths[groupNumber - 1], ...profileTestPaths
-      ], {cwd: fixture})
-      assert.match(grouped.stdout, new RegExp(`Running group ${groupNumber} of 2 \\(1 files\\)`))
+      ]
+      let grouped
+      if (groupNumber === 3) {
+        await assert.rejects(
+          exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), arguments_, {cwd: fixture}),
+          (error) => {
+            grouped = error
+            return error.code === 1
+          }
+        )
+      } else {
+        grouped = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), arguments_, {cwd: fixture})
+      }
+      assert.match(grouped.stdout, new RegExp(`Running group ${groupNumber} of 3 \\(${groupNumber === 3 ? 0 : 1} files\\)`))
       const profile = JSON.parse(await readFile(profilePaths[groupNumber - 1], "utf8"))
       assert.equal(profile.schema, "velocious.test-profile")
-      assert.deepEqual(profile.selection.shard, {groups: 2, groupNumber})
+      assert.equal(profile.status, groupNumber === 3 ? "no-tests" : "passed")
+      assert.deepEqual(profile.selection.shard, {groups: 3, groupNumber})
     }
     const timingManifestPath = path.join(fixture, "timings.json")
     await writeFile(timingManifestPath, "existing\n")
@@ -702,9 +715,9 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     )
     assert.equal(await readFile(timingManifestPath, "utf8"), "existing\n")
     const merge = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [
-      "timing-manifest:merge", `--output=${timingManifestPath}`, profilePaths[1], profilePaths[0]
+      "timing-manifest:merge", `--output=${timingManifestPath}`, profilePaths[2], profilePaths[1], profilePaths[0]
     ], {cwd: fixture})
-    assert.match(merge.stdout, /Merged 2 test profile shards/u)
+    assert.match(merge.stdout, /Merged 3 test profile shards/u)
     assert.deepEqual(Object.keys(JSON.parse(await readFile(timingManifestPath, "utf8"))), [
       "profile-specs/a.test.js", "profile-specs/b.test.js"
     ])

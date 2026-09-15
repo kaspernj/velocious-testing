@@ -38,11 +38,13 @@ describe("Node test suite sharding", () => {
       "/project/spec/controller/a-spec.js",
       "/project/spec/frontend-models/a-spec.js",
       "/project/spec/system/a-spec.js",
-      "/project/spec/frontend-models/a.browser-spec.mjs"
+      "/project/spec/frontend-models/a.browser-spec.mjs",
+      "/project/test/system/a-spec.js",
+      "/project/test/controller/a.browser-spec.cjs"
     ]
     const splitter = new TestSuiteSplitter({groups: 1, groupNumber: 1, testFiles, baseDirectory: "/project"})
 
-    assert.deepEqual(splitter.computeWeightedFiles().map(({weight}) => weight), [1, 3, 10, 20, 20])
+    assert.deepEqual(splitter.computeWeightedFiles().map(({weight}) => weight), [1, 3, 10, 20, 20, 20, 6])
   })
 
   it("prefers usable timings and deterministically falls back for missing, zero, malformed, and external entries", () => {
