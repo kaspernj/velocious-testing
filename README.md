@@ -134,6 +134,9 @@ Run explicit files or let the CLI recursively discover `*.test.*`, `*.spec.*`, a
 npx velocious-test
 npx velocious-test tests/unit.test.js tests/api.test.js:42
 npx velocious-test --include-tag unit --exclude-tag slow --example "adds" --setup tests/setup.js
+npx velocious-test --groups 4 --group-number 1 spec
+npx velocious-test --profile-json tmp/profile-1.json --timing-manifest-output tmp/timings-1.json spec
+npx velocious-test timing-manifest:merge --output tmp/timings.json tmp/profile-1.json tmp/profile-2.json
 npx velocious-test --reporter json
 ```
 
@@ -147,7 +150,9 @@ Each test result line includes its execution time:
 
 Durations below one second use integer milliseconds; longer durations use seconds with millisecond precision. Retried tests sum every attempt, while tests blocked by suite setup are reported as not run.
 
-Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` set run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. `--reporter default` explicitly selects the existing human output. `--reporter json` writes one compact, newline-terminated run result to stdout without human result lines or summaries. The executable reserves stdout for that document and routes other stdout writes, including live console output and separately constructed consoles, to stderr for the remainder of the process. Startup failures are reported to stderr immediately even if imported code keeps the event loop active. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
+Failures and an empty selection exit nonzero. `--retries COUNT` and `--timeout MS` accept safe non-negative integers as run defaults; declarations may use `retries`, `timeoutMs`, or `timeoutSeconds`. Tag, example/name, retry/retries, setup, and reporter aliases accept both space and equals syntax. Paired `--groups`/`--group-number` options create deterministic, complete, disjoint, 1-indexed partitions; a validated timing manifest supplies weights and otherwise the documented path-based fallback weights apply. Candidate-derived and explicit line filters are combined for the same file. Profile output uses the `velocious.test-profile` v1 schema, is written atomically, and can be strictly aggregated into a portable timing manifest only when every compatible shard completed cleanly; a structurally empty `no-tests` group is the sole non-passed status accepted as part of a complete shard set. See [Standalone CLI, discovery, grouping, and timing](docs/testing-cli.md) and [Test profiling](docs/test-profiling.md).
+
+`--reporter default` selects human output. `--reporter json` writes one compact, newline-terminated run result to stdout without human result lines or summaries. The executable reserves stdout for that document and routes other stdout writes, including live console output and separately constructed consoles, to stderr for the remainder of the process. Startup failures are reported to stderr immediately even if imported code keeps the event loop active. `configureTests()` sets `excludeTags`, `retries`, `defaultTimeoutMs`/`defaultTimeoutSeconds`, `consoleOutput`, and `failedConsoleOutputMaxLines` defaults.
 
 ## Public API
 
@@ -155,7 +160,9 @@ The browser/Metro-safe root exports `describe`, `fdescribe`, `xdescribe`, `it`, 
 
 `@velocious/testing/runner` exports `PROTOCOL_MAJOR`, `TestRunner`, `runTests()`, and the ordinary lifecycle `defaultAttemptExecutor`. The runner owns nested traversal and hook order, focus/tags/example/path-line filtering, retries, lifecycle timeouts, console capture, structured events, cleanup, and fresh accounting for repeated runs. Its timeout deadlines and cleanup grace use captured real timers and a captured monotonic clock, with oversized deadlines scheduled in host-supported chunks, so installing the package's fake timers cannot pause or advance runner bookkeeping. Completion and failure are tracked explicitly, so every thrown or rejected value is a failure regardless of truthiness. Every teardown runs in reverse order even after another teardown fails; recursive error records retain the primary and all cleanup failures. Its focused collaborators are `attemptExecutor`, `testArgumentResolver`, `suiteHookExecutor`, and `reporter`; isolated contexts are passed as `{context}`. Reporter promises are awaited before execution advances.
 
-`@velocious/testing/reporters` exports the browser-safe `createJsonReporter({write})`. It ignores intermediate events and awaits one `write(JSON.stringify(event.result) + "\n")` for each `run:finish`; writer and serialization failures propagate through the runner's awaited reporter contract. The writer owns the destination, so this shared reporter has no Node stream or process dependency. See [Reporters](docs/reporters.md) for the programmatic and CLI contracts.
+`@velocious/testing/reporters` exports the browser-safe `createJsonReporter({write})`, `createConsoleReporter(...)`, `composeReporters(...)`, result/error formatters, and `slowestTestResults(...)`. Writers and composed reporters are awaited through the runner contract; callers own destinations, headings, and environment-specific presentation, so the shared entry has no Node stream or process dependency. See [Reporters](docs/reporters.md) for the programmatic and CLI contracts.
+
+`@velocious/testing/profiling` is browser-safe and exports only activity-name validation plus its activity-name type. Node-only profiling, async-context adapters, timing-manifest validation/hashing/merging, deterministic weighted `TestSuiteSplitter`, profile/timing output, discovery, and strict CLI parsing live at `@velocious/testing/node`. These package-owned seams expose no Velocious configuration, event, or database dependency; downstream frameworks supply a narrow context adapter and any framework-specific instrumentation.
 
 Run results keep executed and setup-blocked records in `tests` and add explicit declared non-runs in `nonRunTests` with `skipped` or `todo` status. Each matched explicit non-run emits `test:skip`. `counts.total` remains the number of runnable selected tests, while `counts.skipped` includes filtered declarations and declared non-runs exactly once. A selection matching only explicit skips or todos has `noMatches: false` and succeeds when no other error occurs.
 
@@ -197,11 +204,11 @@ Compatible physical copies share the default context through `Symbol.for("@veloc
 
 Plugins that expose testing helpers should declare `@velocious/testing` as a peer dependency and import its public entries. They should not bundle a private physical copy or depend on the full Velocious framework for generic test behavior. Framework-specific adapters remain downstream.
 
-See [Architecture](docs/architecture.md) for dependency direction and deferred scope, and [Releasing](docs/releasing.md) for the independent release workflow.
+See [Architecture](docs/architecture.md) for dependency direction and downstream adapter scope, and [Releasing](docs/releasing.md) for the independent release workflow.
 
 ## Node support
 
-Node 20, 22, and 24 are supported. The root, runner, and reporters entries contain no Node built-ins; only `@velocious/testing/node` and `velocious-test` require Node.
+Node 20, 22, and 24 are supported. The root, runner, reporters, and profiling entries contain no Node built-ins or raw `import.meta` syntax; only `@velocious/testing/node` and `velocious-test` require Node.
 
 Published source and declaration maps resolve to source files included for debugging. The explicit package export map remains authoritative: shipped `src/` files are not public subpath exports.
 

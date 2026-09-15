@@ -1,13 +1,70 @@
 // @ts-check
 
-import fs from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath, pathToFileURL} from "node:url"
 
 import {defaultTestContext} from "../context.js"
 import {runTests} from "../runner.js"
+import {normalizeExamplePatterns} from "./cli-arguments.js"
+import {discoverTestFiles, lineFiltersFromCandidates, parsePathLine} from "./discovery.js"
+import {loadTimingManifest} from "./test-profile-output.js"
+import {TestSuiteSplitter} from "./test-suite-splitter.js"
+import {timingManifestFileSetHash} from "./timing-manifest.js"
 
-const TEST_FILE_PATTERN = /(?:\.test|\.spec|-test)\.(?:js|mjs|cjs)$/u
+/** @typedef {import("./cli-arguments.js").CliOptions} CliOptions */
+/** @typedef {import("./cli-arguments.js").TestCliArgumentExtraction} TestCliArgumentExtraction */
+/** @typedef {import("./discovery.js").TestDiscoveryOptions} TestDiscoveryOptions */
+/** @typedef {import("./discovery.js").TestLineFilters} TestLineFilters */
+/** @typedef {import("./test-suite-splitter.js").TimingManifestCoverage} TimingManifestCoverage */
+/** @typedef {import("./timing-manifest.js").TimingManifest} TimingManifest */
+/** @typedef {import("./timing-manifest.js").TestProfileTimingManifestInput} TestProfileTimingManifestInput */
+/** @typedef {import("./timing-manifest-merge.js").TimingManifestMergeArguments} TimingManifestMergeArguments */
+/** @typedef {import("./test-profiler.js").ProfileActionAggregate} ProfileActionAggregate */
+/** @typedef {import("./test-profiler.js").ProfileContextAdapter} ProfileContextAdapter */
+/** @typedef {import("./test-profiler.js").ProfileDatabaseAggregate} ProfileDatabaseAggregate */
+/** @typedef {import("./test-profiler.js").ProfilePoolAggregate} ProfilePoolAggregate */
+/** @typedef {import("./test-profiler.js").TestProfileAsyncContext} TestProfileAsyncContext */
+/** @typedef {import("./test-profiler.js").TestProfileAttemptHandle} TestProfileAttemptHandle */
+/** @typedef {import("./test-profiler.js").TestProfileAttemptRecord} TestProfileAttemptRecord */
+/** @typedef {import("./test-profiler.js").TestProfileAttemptStatus} TestProfileAttemptStatus */
+/** @typedef {import("./test-profiler.js").TestProfileCpuAggregate} TestProfileCpuAggregate */
+/** @typedef {import("./test-profiler.js").TestProfileDatabase} TestProfileDatabase */
+/** @typedef {import("./test-profiler.js").TestProfileDocument} TestProfileDocument */
+/** @typedef {import("./test-profiler.js").TestProfileFileAggregate} TestProfileFileAggregate */
+/** @typedef {import("./test-profiler.js").TestProfilePhaseAggregate} TestProfilePhaseAggregate */
+/** @typedef {import("./test-profiler.js").TestProfileQueryFingerprint} TestProfileQueryFingerprint */
+/** @typedef {import("./test-profiler.js").TestProfileScope} TestProfileScope */
+/** @typedef {import("./test-profiler.js").TestProfileSelection} TestProfileSelection */
+/** @typedef {import("./test-profiler.js").TestProfileShard} TestProfileShard */
+/** @typedef {import("./test-profiler.js").TestProfileSpan} TestProfileSpan */
+/** @typedef {import("./test-profiler.js").TestProfileStatus} TestProfileStatus */
+/** @typedef {import("./test-profiler.js").TestProfileTestRecord} TestProfileTestRecord */
+/** @typedef {import("./test-profile-output.js").ResolvedTestProfileOptions} ResolvedTestProfileOptions */
+/** @typedef {import("./test-profile-output.js").TestProfileOptions} TestProfileOptions */
+/** @typedef {import("./test-profile-output.js").TestProfileOutputOptions} TestProfileOutputOptions */
+/** @typedef {import("./test-profile-output.js").TestProfileSummaryOutputs} TestProfileSummaryOutputs */
+
+export {extractTestCliArguments, normalizeExamplePatterns, parseCliArguments} from "./cli-arguments.js"
+export {discoverTestFiles, lineFiltersFromCandidates, parsePathLine} from "./discovery.js"
+export {TestSuiteSplitter} from "./test-suite-splitter.js"
+export {parseTimingManifestMergeArguments} from "./timing-manifest-merge.js"
+export {default as TestProfiler, roundProfileDuration} from "./test-profiler.js"
+export {
+  formatTestProfileSummary,
+  loadTimingManifest,
+  resolveTestProfileOptions,
+  timingManifestFromProfile,
+  writeTestProfileOutputs,
+  writeTimingManifest
+} from "./test-profile-output.js"
+export {
+  canonicalTimingManifestPath,
+  compareTimingManifestPaths,
+  mergeTestProfileTimingManifests,
+  timingManifestFileSetHash,
+  validateTimingManifest
+} from "./timing-manifest.js"
+
 const DECLARATION_INTERNAL_PATHS = new Set([
   fileURLToPath(import.meta.url),
   fileURLToPath(new URL("../context.js", import.meta.url))
@@ -15,121 +72,126 @@ const DECLARATION_INTERNAL_PATHS = new Set([
 let importSequence = 0
 
 /**
- * @typedef {object} CliOptions
- * @property {string[]} candidates
- * @property {string[]} includeTags
- * @property {string[]} excludeTags
- * @property {string[]} examples
- * @property {string[]} setupFiles
- * @property {"default" | "json"} [reporter]
- * @property {boolean} [help]
- * @property {number} [retries]
- * @property {number} [timeoutMs]
- */
-/**
  * @typedef {Omit<import("../runner.js").TestRunnerOptions, "examples"> & {
  *   cwd?: string,
  *   candidates?: string[],
  *   examples?: Array<string | RegExp>,
  *   setupFiles?: string[],
- *   importer?: (filePath: string) => any | Promise<any>
+ *   importer?: (filePath: string) => any | Promise<any>,
+ *   directories?: string[],
+ *   filePattern?: RegExp,
+ *   ignoredNames?: string[],
+ *   groups?: number,
+ *   groupNumber?: number,
+ *   timingManifest?: Record<string, number>,
+ *   timingManifestPath?: string,
+ *   profiler?: import("./test-profiler.js").default
  * }} RunNodeTestsOptions
  */
+/** @typedef {import("../runner.js").TestRunResult & {files: string[], focused: boolean, timingManifestCoverage?: TimingManifestCoverage}} RunNodeTestResult */
 
-/** @param {string} value @returns {string} */
-function portablePath(value) { return value.replaceAll("\\", "/") }
-
-/** @param {string} candidate @returns {{path: string, line?: number}} */
-export function parsePathLine(candidate) {
-  const normalized = portablePath(candidate)
-  const match = normalized.match(/^(.*):(\d+)$/u)
-  if (!match) return {path: normalized}
-  return {path: match[1], line: Number(match[2])}
+/**
+ * @param {import("../context.js").SuiteDeclaration[]} suites
+ * @param {boolean} [ancestorFocused]
+ * @returns {boolean}
+ */
+function hasFocusedDeclarations(suites, ancestorFocused = false) {
+  return suites.some((suite) => {
+    const focused = ancestorFocused || suite.focus
+    return suite.tests.some((test) => test.state === "run" && (focused || test.focus)) ||
+      hasFocusedDeclarations(suite.suites, focused)
+  })
 }
 
-/** @param {string} target @returns {Promise<boolean>} */
-async function exists(target) {
-  try { await fs.access(target); return true } catch { return false }
-}
-
-/** @param {string} directory @returns {Promise<string[]>} */
-async function walkTests(directory) {
-  const files = []
-  const entries = await fs.readdir(directory, {withFileTypes: true})
-  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue
-    const target = path.join(directory, entry.name)
-    if (entry.isDirectory()) files.push(...await walkTests(target))
-    else if (entry.isFile() && TEST_FILE_PATTERN.test(entry.name)) files.push(target)
+/** @param {TestLineFilters[]} sources @returns {TestLineFilters} */
+function mergeLineFilters(sources) {
+  /** @type {TestLineFilters} */
+  const merged = {}
+  for (const source of sources) {
+    for (const [filePath, sourceLines] of Object.entries(source)) {
+      const lines = merged[filePath] ||= []
+      for (const line of sourceLines) {
+        if (!lines.includes(line)) lines.push(line)
+      }
+      lines.sort((lineA, lineB) => lineA - lineB)
+    }
   }
-  return files
+  return merged
 }
 
 /**
- * @param {{cwd?: string, candidates?: string[]}} [options]
- * @returns {Promise<string[]>}
+ * @param {import("./test-profiler.js").default} profiler
+ * @param {import("../context.js").SuiteDeclaration[]} lineage
+ * @param {WeakMap<object, string>} declarationOwnerPaths
+ * @returns {string | undefined}
  */
-export async function discoverTestFiles(options = {}) {
-  const cwd = path.resolve(options.cwd || process.cwd())
-  const candidates = options.candidates || []
-  const targets = []
-  if (candidates.length) {
-    for (const candidate of candidates) targets.push(path.resolve(cwd, parsePathLine(candidate).path))
-  } else {
-    for (const conventional of ["test", "tests", "spec", "__tests__"]) {
-      const target = path.join(cwd, conventional)
-      if (await exists(target)) targets.push(target)
-    }
+function profileScopeId(profiler, lineage, declarationOwnerPaths) {
+  /** @type {string | undefined} */
+  let parentId
+  const descriptions = []
+  for (const suite of lineage) {
+    descriptions.push(suite.name)
+    parentId = profiler.scopeId(suite, {
+      descriptions: [...descriptions],
+      filePath: declarationOwnerPaths.get(suite) ?? suite.location.filePath,
+      line: suite.location.line,
+      parentId
+    })
   }
-
-  const files = []
-  for (const target of targets) {
-    let stats
-    try { stats = await fs.stat(target) } catch { throw new Error(`Test path does not exist: ${target}`) }
-    if (stats.isDirectory()) files.push(...await walkTests(target))
-    else if (stats.isFile()) files.push(target)
-  }
-  return [...new Set(files.map((file) => path.resolve(file)))].sort()
+  return parentId
 }
 
-/** @param {string[]} argv @returns {CliOptions} */
-export function parseCliArguments(argv) {
-  /** @type {CliOptions} */
-  const output = {candidates: [], includeTags: [], excludeTags: [], examples: [], setupFiles: []}
-  const takesValue = new Set(["--include-tag", "--exclude-tag", "--example", "--setup", "--retries", "--timeout", "--reporter"])
-  for (let index = 0; index < argv.length; index += 1) {
-    const argument = argv[index]
-    if (argument === "--help" || argument === "-h") { output.help = true; continue }
-    const equalIndex = argument.indexOf("=")
-    const name = equalIndex >= 0 ? argument.slice(0, equalIndex) : argument
-    let value = equalIndex >= 0 ? argument.slice(equalIndex + 1) : undefined
-    if (takesValue.has(name) && value === undefined) {
-      value = argv[index + 1]
-      index += 1
+/**
+ * Instruments the existing lifecycle callbacks without reimplementing their ordering, cleanup, or timeout behavior.
+ * @param {import("../context.js").SuiteDeclaration[]} suites
+ * @param {import("./test-profiler.js").default} profiler
+ * @param {WeakMap<object, string>} declarationOwnerPaths
+ * @param {import("../context.js").SuiteDeclaration[]} [ancestors]
+ * @returns {() => void}
+ */
+function instrumentProfileLifecycle(suites, profiler, declarationOwnerPaths, ancestors = []) {
+  /** @type {Array<() => void>} */
+  const restorations = []
+  for (const suite of suites) {
+    const lineage = [...ancestors, suite]
+    for (const phase of /** @type {const} */ (["beforeAll", "beforeEach", "afterEach", "afterAll"])) {
+      for (const [declarationIndex, hook] of suite.hooks[phase].entries()) {
+        const callback = hook.callback
+        /** @type {import("../context.js").LifecycleCallback} */
+        const instrumented = (...args) => {
+          return profiler.runSpan({
+            phase,
+            declarationIndex,
+            declarationScopeId: profileScopeId(profiler, lineage, declarationOwnerPaths),
+            filePath: declarationOwnerPaths.get(hook) ?? declarationOwnerPaths.get(suite) ?? hook.location.filePath
+          }, () => callback(...args))
+        }
+        hook.callback = instrumented
+        restorations.push(() => {
+          if (hook.callback === instrumented) hook.callback = callback
+        })
+      }
     }
-    if (takesValue.has(name) && (value === undefined || value === "")) throw new Error(`${name} requires a value`)
-    const optionValue = value ?? ""
-    if (name === "--include-tag") output.includeTags.push(optionValue)
-    else if (name === "--exclude-tag") output.excludeTags.push(optionValue)
-    else if (name === "--example") output.examples.push(optionValue)
-    else if (name === "--setup") output.setupFiles.push(optionValue)
-    else if (name === "--retries") output.retries = numericOption(name, optionValue)
-    else if (name === "--timeout") output.timeoutMs = numericOption(name, optionValue)
-    else if (name === "--reporter") {
-      if (!["default", "json"].includes(optionValue)) throw new Error("--reporter must be one of: default, json")
-      output.reporter = /** @type {"default" | "json"} */ (optionValue)
+    for (const test of suite.tests) {
+      const callback = test.callback
+      /** @type {import("../context.js").LifecycleCallback} */
+      const instrumented = (...args) => {
+        return profiler.runSpan({
+          phase: "test body",
+          filePath: declarationOwnerPaths.get(test) ?? declarationOwnerPaths.get(suite) ?? test.location.filePath
+        }, () => callback(...args))
+      }
+      test.callback = instrumented
+      restorations.push(() => {
+        if (test.callback === instrumented) test.callback = callback
+      })
     }
-    else if (name.startsWith("-")) throw new Error(`Unknown option: ${name}`)
-    else output.candidates.push(argument)
+    const restoreNested = instrumentProfileLifecycle(suite.suites, profiler, declarationOwnerPaths, lineage)
+    restorations.push(restoreNested)
   }
-  return output
-}
-
-/** @param {string} name @param {string} value @returns {number} */
-function numericOption(name, value) {
-  const number = Number(value)
-  if (!Number.isFinite(number) || number < 0 || !Number.isInteger(number)) throw new Error(`${name} must be a non-negative integer`)
-  return number
+  return () => {
+    for (const restore of restorations.reverse()) restore()
+  }
 }
 
 /** @param {string | undefined} ownerFilePath @returns {{filePath?: string, line?: number}} */
@@ -159,59 +221,147 @@ export async function defaultImporter(filePath) {
 
 /**
  * @param {RunNodeTestsOptions} [options]
- * @returns {Promise<import("../runner.js").TestRunResult & {files: string[]}>}
+ * @returns {Promise<RunNodeTestResult>}
  */
 export async function runNodeTests(options = {}) {
+  if ((options.groups === undefined) !== (options.groupNumber === undefined)) {
+    throw new Error("groups and groupNumber must be supplied together")
+  }
   const cwd = path.resolve(options.cwd || process.cwd())
   const context = options.context || defaultTestContext
   const importer = options.importer || defaultImporter
+  const profiler = options.profiler
   context.reset({config: true})
   /** @type {string | undefined} */
   let ownerFilePath
   context.setDeclarationLocator(() => captureDeclarationLocation(ownerFilePath))
-
-  for (const setup of options.setupFiles || []) {
-    ownerFilePath = path.resolve(cwd, parsePathLine(setup).path)
-    await importer(ownerFilePath)
+  /** @type {WeakMap<object, string>} */
+  const declarationOwnerPaths = new WeakMap()
+  /** @param {{declaration?: object}} event */
+  const rememberDeclarationOwner = (event) => {
+    if (ownerFilePath && event.declaration) declarationOwnerPaths.set(event.declaration, ownerFilePath)
   }
+  context.events.on("declaration", rememberDeclarationOwner)
 
-  const files = await discoverTestFiles({cwd, candidates: options.candidates})
-  const lineFilters = {...(options.lineFilters || {})}
-  for (const candidate of options.candidates || []) {
-    const parsed = parsePathLine(candidate)
-    if (parsed.line !== undefined) {
-      const filePath = path.resolve(cwd, parsed.path)
-      ;(lineFilters[filePath] ||= []).push(parsed.line)
+  const lineFilters = mergeLineFilters([
+    lineFiltersFromCandidates({cwd, candidates: options.candidates}),
+    options.lineFilters || {}
+  ])
+  /** @type {string[]} */
+  let files = []
+  /** @type {import("./test-suite-splitter.js").TimingManifestCoverage | undefined} */
+  let timingManifestCoverage
+  /** @param {string} filePath @param {"imports" | "testing config/global setup"} phase */
+  const importOwnedFile = async (filePath, phase) => {
+    ownerFilePath = filePath
+    try {
+      if (profiler) await profiler.measurePhase(phase, async () => await importer(filePath), {filePath})
+      else await importer(filePath)
+    } finally {
+      ownerFilePath = undefined
     }
   }
-  for (const file of files) {
-    ownerFilePath = file
-    await importer(file)
+
+  try {
+    for (const setup of options.setupFiles || []) {
+      const setupPath = path.resolve(cwd, parsePathLine(setup).path)
+      await importOwnedFile(setupPath, "testing config/global setup")
+    }
+
+    const discover = async () => await discoverTestFiles({
+      cwd,
+      candidates: options.candidates,
+      directories: options.directories,
+      filePattern: options.filePattern,
+      ignoredNames: options.ignoredNames
+    })
+    if (profiler) {
+      files = await profiler.measurePhase("discovery", discover)
+      const discoveredPaths = files.map((filePath) => profiler.safeSourcePath(filePath))
+      profiler.setSelection({
+        discoveredFileCount: files.length,
+        hasLineFilters: Object.keys(lineFilters).length > 0,
+        testFileSetHash: timingManifestFileSetHash(discoveredPaths)
+      })
+    } else {
+      files = await discover()
+    }
+    const timingManifest = options.timingManifest ?? await loadTimingManifest(options.timingManifestPath)
+    if (options.groups !== undefined && options.groupNumber !== undefined) {
+      const splitter = new TestSuiteSplitter({
+        groups: options.groups,
+        groupNumber: options.groupNumber,
+        testFiles: files,
+        baseDirectory: cwd,
+        timingManifest
+      })
+      timingManifestCoverage = options.timingManifestPath ? splitter.getTimingManifestCoverage() : undefined
+      files = splitter.getGroupFiles()
+    }
+    profiler?.setSelection({fileCount: files.length})
+
+    for (const file of files) await importOwnedFile(file, "imports")
+  } finally {
+    ownerFilePath = undefined
+    context.events.off("declaration", rememberDeclarationOwner)
   }
-  ownerFilePath = undefined
-  const examples = (options.examples || []).map((/** @type {string | RegExp} */ example) => example instanceof RegExp ? example : new RegExp(example, "u"))
-  const result = await runTests({
-    context,
-    includeTags: options.includeTags,
-    includeTagMode: options.includeTagMode,
-    excludeTags: options.excludeTags,
-    focusedTestsBypassIncludeTags: options.focusedTestsBypassIncludeTags,
-    ignoreFocus: options.ignoreFocus,
-    omitEmptySuiteNames: options.omitEmptySuiteNames,
-    examples,
-    lineFilters,
-    retries: options.retries,
-    timeoutMs: options.timeoutMs,
-    reporter: options.reporter,
-    attemptExecutor: options.attemptExecutor,
-    attemptExecutorOwnsTimeout: options.attemptExecutorOwnsTimeout,
-    testArgumentResolver: options.testArgumentResolver,
-    suiteHookExecutor: options.suiteHookExecutor
-  })
-  return {...result, files}
+  const examples = [
+    ...normalizeExamplePatterns((options.examples || []).filter((example) => typeof example === "string")),
+    ...(options.examples || []).filter((example) => example instanceof RegExp)
+  ]
+  const restoreProfileLifecycle = profiler
+    ? instrumentProfileLifecycle(context.registry.suites, profiler, declarationOwnerPaths)
+    : () => {}
+  const attemptExecutor = profiler ? async (/** @type {import("../runner.js").AttemptExecutorInput} */ input) => {
+    const descriptions = input.fullName.endsWith(input.test.name)
+      ? [input.fullName.slice(0, -input.test.name.length).trimEnd()]
+      : [input.suite.name]
+    const ownerFilePath = declarationOwnerPaths.get(input.test) ?? declarationOwnerPaths.get(input.suite)
+    const handle = profiler.startAttempt({
+      descriptions,
+      attemptNumber: input.attemptNumber,
+      testData: ownerFilePath ? {...input.test, ownerFilePath} : input.test,
+      testDescription: input.test.name
+    })
+    try {
+      await profiler.runAttempt(handle, async () => {
+        if (options.attemptExecutor) await options.attemptExecutor(input)
+        else await input.defaultExecute()
+      })
+      profiler.finishAttempt(handle, "passed")
+    } catch (error) {
+      const status = error instanceof Error && /^Timed out after /u.test(error.message) ? "timed-out" : "failed"
+      profiler.finishAttempt(handle, status)
+      throw error
+    }
+  } : options.attemptExecutor
+  try {
+    const result = await runTests({
+      context,
+      includeTags: options.includeTags,
+      includeTagMode: options.includeTagMode,
+      excludeTags: options.excludeTags,
+      focusedTestsBypassIncludeTags: options.focusedTestsBypassIncludeTags,
+      ignoreFocus: options.ignoreFocus,
+      omitEmptySuiteNames: options.omitEmptySuiteNames,
+      examples,
+      lineFilters,
+      retries: options.retries,
+      timeoutMs: options.timeoutMs,
+      reporter: options.reporter,
+      attemptExecutor,
+      attemptExecutorOwnsTimeout: profiler && !options.attemptExecutor ? true : options.attemptExecutorOwnsTimeout,
+      testArgumentResolver: options.testArgumentResolver,
+      suiteHookExecutor: options.suiteHookExecutor
+    })
+    const focused = !options.ignoreFocus && hasFocusedDeclarations(context.registry.suites)
+    return {...result, files, focused, ...(timingManifestCoverage ? {timingManifestCoverage} : {})}
+  } finally {
+    restoreProfileLifecycle()
+  }
 }
 
 /** @returns {string} */
 export function cliHelp() {
-  return `Usage: velocious-test [options] [path[:line] ...]\n\nOptions:\n  --include-tag TAG   Require a tag (repeatable)\n  --exclude-tag TAG   Exclude a tag (repeatable)\n  --example PATTERN   Match a full test description (repeatable)\n  --setup FILE        Import a setup file before tests (repeatable)\n  --retries COUNT     Retry failed tests\n  --timeout MS        Default lifecycle timeout\n  --reporter FORMAT  Use default or json output\n  -h, --help          Show this help\n`
+  return `Usage: velocious-test [options] [path[:line] ...]\n       velocious-test timing-manifest:merge --output FILE PROFILE...\n\nOptions:\n  --include-tag TAG              Require a tag (repeatable; aliases: --tag, -t)\n  --exclude-tag TAG              Exclude a tag (repeatable; aliases: --skip-tag, -x)\n  --example PATTERN              Match a full test description (aliases: --name, -e)\n  --setup FILE                   Import a setup file before tests (repeatable)\n  --retry, --retries COUNT       Retry failed tests\n  --timeout MS                   Default lifecycle timeout\n  --groups COUNT                 Split files into COUNT deterministic groups\n  --group-number NUMBER          Run one 1-indexed group (requires --groups)\n  --timing-manifest FILE         Use prior file durations for group balancing\n  --profile                      Print a test profile summary\n  --profile-json FILE            Write a rich velocious.test-profile v1 document\n  --timing-manifest-output FILE  Write the selected files' timing manifest\n  --reporter FORMAT  Use default or json output\n  -h, --help                     Show this help\n`
 }
