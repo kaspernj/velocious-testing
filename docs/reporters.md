@@ -20,9 +20,15 @@ The reporter ignores events other than `run:finish`. For every finish it awaits 
 
 The writer may be synchronous or asynchronous. A serialization failure or thrown/rejected writer failure propagates from `onEvent`, and therefore from the runner that awaits it. The shared reporter does not select a stream, inspect the process, import Node modules, or determine an exit status.
 
+## Console composition and slowest results
+
+The same browser-safe entry exports `createConsoleReporter({write, writeError, failedConsoleOutputMaxLines, colorize})`, `composeReporters(reporters)`, `formatTestResultLine(result)`, `formatTestError(error)`, and `slowestTestResults(runResult, {limit})`. Writers may be synchronous or asynchronous and are awaited. Composition delivers each event sequentially in the supplied order and propagates failures. The console reporter derives human lines, causal errors, bounded final-attempt console output, suite failures, and the summary from protocol-1 records without inspecting Node streams or Velocious configuration.
+
+`slowestTestResults` sums every attempt for each executed test, sorts slowest first without mutating the run result, and omits setup-blocked records that have no attempts. A positive limit truncates the projection; `0` returns every executed test. Callers own headings, destinations, and environment-specific location presentation.
+
 ## Node CLI selection
 
-`velocious-test --reporter default` selects the existing human result lines and summary. Omitting `--reporter` is identical. `velocious-test --reporter json` writes exactly one compact result document followed by a newline to stdout for each completed CLI run. Passed results exit zero; failed results, including an empty selection, exit one. Ordinary test, setup, and cleanup failures remain inside that JSON result rather than being duplicated as human diagnostics.
+`velocious-test --reporter default` selects the generic console reporter's human result lines and summary. Omitting `--reporter` is identical. `velocious-test --reporter json` writes exactly one compact result document followed by a newline to stdout for each completed CLI run. Passed results exit zero; failed results, including an empty selection, exit one. Ordinary test, setup, and cleanup failures remain inside that JSON result rather than being duplicated as human diagnostics.
 
 Argument, discovery, import, serialization, and writer failures are CLI failures rather than completed runs; they write a diagnostic to stderr and exit one without guaranteeing a JSON document. A settled startup failure is reported immediately rather than waiting for imported persistent handles to release the event loop. Help remains on stdout and exits zero.
 

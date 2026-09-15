@@ -3,8 +3,10 @@ import {spawn, spawnSync} from "node:child_process"
 import {mkdir, mkdtemp, rm, writeFile} from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import test from "node:test"
+import {describe, it} from "node:test"
 import {pathToFileURL} from "node:url"
+
+import {parseTimingManifestMergeArguments} from "../src/node/index.js"
 
 const cliPath = path.resolve("src/node/cli.js")
 const packageEntry = pathToFileURL(path.resolve("src/index.js")).href
@@ -21,7 +23,8 @@ function parseSingleJsonLine(stdout) {
   return JSON.parse(stdout)
 }
 
-test("CLI JSON reporter emits only one result document and preserves result exit semantics", async () => {
+describe("standalone Node CLI", () => {
+it("CLI JSON reporter emits only one result document and preserves result exit semantics", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-cli-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -69,7 +72,7 @@ test("CLI JSON reporter emits only one result document and preserves result exit
   }
 })
 
-test("CLI JSON reporter keeps live console output on stderr", async () => {
+it("CLI JSON reporter keeps live console output on stderr", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-live-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -98,7 +101,7 @@ test("CLI JSON reporter keeps live console output on stderr", async () => {
   }
 })
 
-test("CLI JSON reporter exclusively owns the stdout stream", async () => {
+it("CLI JSON reporter exclusively owns the stdout stream", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-stdout-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -127,7 +130,7 @@ test("CLI JSON reporter exclusively owns the stdout stream", async () => {
   }
 })
 
-test("CLI JSON reporter keeps delayed unawaited console output off stdout", async () => {
+it("CLI JSON reporter keeps delayed unawaited console output off stdout", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-delayed-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -148,7 +151,7 @@ test("CLI JSON reporter keeps delayed unawaited console output off stdout", asyn
   }
 })
 
-test("CLI JSON reporter keeps work scheduled during beforeExit off stdout", async () => {
+it("CLI JSON reporter keeps work scheduled during beforeExit off stdout", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-before-exit-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -168,7 +171,7 @@ test("CLI JSON reporter keeps work scheduled during beforeExit off stdout", asyn
   }
 })
 
-test("CLI JSON reporter keeps delayed console output off stdout after an import failure", async () => {
+it("CLI JSON reporter keeps delayed console output off stdout after an import failure", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-delayed-import-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -187,7 +190,7 @@ test("CLI JSON reporter keeps delayed console output off stdout after an import 
   }
 })
 
-test("CLI JSON reporter reports import failures without waiting for persistent handles", async () => {
+it("CLI JSON reporter reports import failures without waiting for persistent handles", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-persistent-import-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -237,7 +240,7 @@ test("CLI JSON reporter reports import failures without waiting for persistent h
   }
 })
 
-test("explicit default CLI output matches omitted reporter output", async () => {
+it("explicit default CLI output matches omitted reporter output", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-default-cli-"))
   try {
     await mkdir(path.join(root, "tests"))
@@ -261,7 +264,7 @@ test("explicit default CLI output matches omitted reporter output", async () => 
   }
 })
 
-test("CLI reporter argument failures stay on stderr and help stays on stdout", () => {
+it("CLI reporter argument failures stay on stderr and help stays on stdout", () => {
   const unsupported = runCli(process.cwd(), ["--reporter", "junit", "definitely-missing.test.mjs"])
   assert.equal(unsupported.status, 1)
   assert.equal(unsupported.stdout, "")
@@ -278,7 +281,7 @@ test("CLI reporter argument failures stay on stderr and help stays on stdout", (
   assert.equal(help.stderr, "")
 })
 
-test("CLI JSON discovery and import failures stay on stderr without a result document", async () => {
+it("CLI JSON discovery and import failures stay on stderr without a result document", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-json-errors-"))
   try {
     const discovery = runCli(root, ["--reporter", "json", "missing.test.mjs"])
@@ -295,4 +298,99 @@ test("CLI JSON discovery and import failures stay on stderr without a result doc
   } finally {
     await rm(root, {recursive: true, force: true})
   }
+})
+
+it("runs deterministic standalone groups and rejects incomplete grouping options", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-cli-groups-"))
+  try {
+    await mkdir(path.join(root, "spec"))
+    for (const name of ["a.test.mjs", "b.test.mjs"]) {
+      await writeFile(path.join(root, "spec", name), [
+        `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+        `describe(${JSON.stringify(name)}, () => it("passes", () => {}))`
+      ].join("\n"))
+    }
+
+    const first = runCli(root, ["--groups", "4", "--group-number", "1", "spec"])
+    const fourth = runCli(root, ["--groups=4", "--group-number=4", "spec"])
+    const incomplete = runCli(root, ["--groups=4", "spec"])
+
+    assert.equal(first.status, 0, first.stderr)
+    assert.match(first.stdout, /Running group 1 of 4 \(1 files\)/u)
+    assert.match(first.stdout, /1 passed, 0 failed, 1 total/u)
+    assert.equal(fourth.status, 1)
+    assert.match(fourth.stdout, /Running group 4 of 4 \(0 files\)/u)
+    assert.match(fourth.stderr, /No tests matched/u)
+    assert.equal(incomplete.status, 1)
+    assert.match(incomplete.stderr, /provided together/u)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+it("profiles two shards, merges them non-destructively, and reuses the timing manifest", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-cli-profile-"))
+  try {
+    await mkdir(path.join(root, "spec"))
+    const profilePaths = [path.join(root, "profile-1.json"), path.join(root, "profile-2.json")]
+    const manifestPath = path.join(root, "timings.json")
+    for (const name of ["a.test.mjs", "b.test.mjs"]) {
+      await writeFile(path.join(root, "spec", name), [
+        `import {describe, it} from ${JSON.stringify(packageEntry)}`,
+        `describe(${JSON.stringify(name)}, () => it("passes", async () => {}))`
+      ].join("\n"))
+    }
+    for (const groupNumber of [1, 2]) {
+      const result = runCli(root, [
+        "--groups=2", `--group-number=${groupNumber}`,
+        `--profile-json=${profilePaths[groupNumber - 1]}`, "spec"
+      ])
+      assert.equal(result.status, 0, result.stderr)
+      const profile = JSON.parse(await (await import("node:fs/promises")).readFile(profilePaths[groupNumber - 1], "utf8"))
+      assert.equal(profile.schema, "velocious.test-profile")
+      assert.equal(profile.schemaVersion, 1)
+      assert.equal(profile.status, "passed")
+      assert.deepEqual(profile.selection.shard, {groups: 2, groupNumber})
+      assert.equal(profile.selection.discoveredFileCount, 2)
+      assert.equal(profile.selection.fileCount, 1)
+      assert.equal(Object.keys(profile.timingManifest).length, 1)
+    }
+
+    await writeFile(manifestPath, "existing output\n")
+    const incomplete = runCli(root, ["timing-manifest:merge", "--output", manifestPath, profilePaths[0]])
+    assert.equal(incomplete.status, 1)
+    assert.match(incomplete.stderr, /missing shard/iu)
+    assert.equal(await (await import("node:fs/promises")).readFile(manifestPath, "utf8"), "existing output\n")
+
+    const merged = runCli(root, [
+      "timing-manifest:merge", `--output=${manifestPath}`, profilePaths[1], profilePaths[0]
+    ])
+    assert.equal(merged.status, 0, merged.stderr)
+    assert.match(merged.stdout, /Merged 2 test profile shards/u)
+    assert.deepEqual(Object.keys(JSON.parse(await (await import("node:fs/promises")).readFile(manifestPath, "utf8"))), [
+      "spec/a.test.mjs", "spec/b.test.mjs"
+    ])
+
+    const reused = runCli(root, [
+      "--groups=2", "--group-number=1", `--timing-manifest=${manifestPath}`, "spec"
+    ])
+    assert.equal(reused.status, 0, reused.stderr)
+    assert.match(reused.stdout, /Timing manifest coverage: measured=2 heuristic=0 stale=0/u)
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+it("strictly parses resolved merge arguments", () => {
+  const cwd = path.resolve("/workspace/project")
+  assert.deepEqual(parseTimingManifestMergeArguments([
+    "profile-1.json", "--output=timings.json", "profile-2.json"
+  ], {cwd}), {
+    inputPaths: [path.join(cwd, "profile-1.json"), path.join(cwd, "profile-2.json")],
+    outputPath: path.join(cwd, "timings.json")
+  })
+  assert.throws(() => parseTimingManifestMergeArguments(["one.json"], {cwd}), /--output is required/u)
+  assert.throws(() => parseTimingManifestMergeArguments(["one.json", "--output", "one.json"], {cwd}), /must not overwrite/u)
+  assert.throws(() => parseTimingManifestMergeArguments(["--wat"], {cwd}), /unknown argument/iu)
+})
 })

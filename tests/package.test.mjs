@@ -4,7 +4,7 @@ import {cp, mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import {promisify} from "node:util"
-import test from "node:test"
+import {describe, test} from "node:test"
 
 import {build as bundle} from "esbuild"
 
@@ -34,16 +34,18 @@ async function materializeCandidateSourceCopy(directory) {
   await cp("package.json", path.join(directory, "package.json"))
 }
 
+describe("published package contract", () => {
+
 test("lockfile and package metadata contain no Velocious dependency", async () => {
   const lock = JSON.parse(await readFile("package-lock.json", "utf8"))
   assert.equal(hasVelociousDependency(lock.packages?.[""] || {}), false)
   assert.equal(Object.keys(lock.packages || {}).some((name) => name === "node_modules/velocious"), false)
 })
 
-test("root, runner, and reporters bundle for browsers without Node built-ins", async () => {
+test("root, runner, reporters, and profiling bundle for browsers without Node built-ins", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-bundle-"))
   try {
-    for (const entry of ["src/index.js", "src/runner.js", "src/reporters.js"]) {
+    for (const entry of ["src/index.js", "src/runner.js", "src/reporters.js", "src/profiling.js"]) {
       const result = await bundle({entryPoints: [entry], bundle: true, format: "esm", platform: "browser", write: false, metafile: true})
       assert.ok(result.outputFiles[0].text.length > 0)
       const inputPaths = Object.keys(result.metafile.inputs)
@@ -52,7 +54,7 @@ test("root, runner, and reporters bundle for browsers without Node built-ins", a
         assert.ok(inputPaths.includes("src/fake-timers.js"))
         assert.ok(inputPaths.includes("src/mocks.js"))
       }
-      if (entry !== "src/reporters.js") {
+      if (!["src/reporters.js", "src/profiling.js"].includes(entry)) {
         assert.ok(inputPaths.includes("src/real-time.js"))
         assert.ok(inputPaths.includes("src/shared-runtime-state.js"))
       }
@@ -357,13 +359,42 @@ test("generated reporter declarations expose the JSON writer contract", async ()
   ], {cwd: process.cwd()})
 })
 
+test("generated profiling declarations expose only activity-name validation", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--skipLibCheck",
+    "tests/types/profiling.test.ts"
+  ], {cwd: process.cwd()})
+})
+
+test("generated Node declarations expose discovery, sharding, timing, and profiling contracts", async () => {
+  await exec(path.resolve("node_modules/.bin/tsc"), [
+    "--ignoreConfig",
+    "--noEmit",
+    "--strict",
+    "--target", "ES2022",
+    "--module", "NodeNext",
+    "--moduleResolution", "NodeNext",
+    "--lib", "ES2022,DOM",
+    "--types", "node",
+    "--skipLibCheck",
+    "tests/types/node.test.ts"
+  ], {cwd: process.cwd()})
+})
+
 test("packed tarball has explicit exports, resolvable maps, declarations, executable CLI, and works standalone", async () => {
   const artifactDirectory = path.resolve("tmp/package")
   const cacheDirectory = path.resolve("tmp/npm-cache")
   await mkdir(artifactDirectory, {recursive: true})
   const dry = JSON.parse((await exec("npm", ["pack", "--dry-run", "--json", "--cache", cacheDirectory], {cwd: process.cwd()})).stdout)[0]
   const names = dry.files.map((file) => file.path)
-  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/fake-timers.js", "build/fake-timers.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/real-time.js", "build/real-time.d.ts", "build/reporters.js", "build/reporters.js.map", "build/reporters.d.ts", "build/reporters.d.ts.map", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/fake-timers.md", "docs/matchers.md", "docs/reporters.md", "docs/test-doubles.md", "README.md", "LICENSE"]) {
+  for (const required of ["package.json", "build/index.js", "build/index.d.ts", "build/equality.js", "build/equality.d.ts", "build/fake-timers.js", "build/fake-timers.d.ts", "build/matchers.js", "build/matchers.d.ts", "build/mocks.js", "build/mocks.d.ts", "build/profiling.js", "build/profiling.js.map", "build/profiling.d.ts", "build/profiling.d.ts.map", "build/real-time.js", "build/real-time.d.ts", "build/reporters.js", "build/reporters.js.map", "build/reporters.d.ts", "build/reporters.d.ts.map", "build/runner.js", "build/runner.d.ts", "build/node/index.js", "build/node/index.d.ts", "build/node/cli.js", "docs/fake-timers.md", "docs/matchers.md", "docs/reporters.md", "docs/test-doubles.md", "docs/test-profiling.md", "docs/testing-cli.md", "README.md", "LICENSE"]) {
     assert.ok(names.includes(required), `missing ${required}`)
   }
   assert.ok(names.includes("src/index.js"))
@@ -391,6 +422,8 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     const mockDeclarations = await readFile(path.join(installedPackage, "build", "mocks.d.ts"), "utf8")
     const timerDeclarations = await readFile(path.join(installedPackage, "build", "fake-timers.d.ts"), "utf8")
     const reporterDeclarations = await readFile(path.join(installedPackage, "build", "reporters.d.ts"), "utf8")
+    const profilingDeclarations = await readFile(path.join(installedPackage, "build", "profiling.d.ts"), "utf8")
+    const nodeDeclarations = await readFile(path.join(installedPackage, "build", "node", "index.d.ts"), "utf8")
     assert.match(rootDeclarations, /createFakeTimers.*\.\/fake-timers\.js/u)
     for (const publicType of ["FakeTimerOptions", "FakeTimers", "FakeTimerTarget"]) {
       assert.match(rootDeclarations, new RegExp(`export type ${publicType}\\b`, "u"))
@@ -411,6 +444,14 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     }
     assert.match(reporterDeclarations, /createJsonReporter\(.*JsonReporterOptions.*\):.*Reporter/u)
     assert.match(reporterDeclarations, /export type JsonReporterOptions\b/u)
+    for (const publicName of ["createConsoleReporter", "composeReporters", "slowestTestResults"]) {
+      assert.match(reporterDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
+    }
+    assert.match(profilingDeclarations, /validateTestActivityName/u)
+    assert.match(profilingDeclarations, /export type TestActivityName\b/u)
+    for (const publicName of ["TestSuiteSplitter", "TestProfiler", "mergeTestProfileTimingManifests", "writeTestProfileOutputs"]) {
+      assert.match(nodeDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
+    }
     const reporterProbe = await exec("node", ["--input-type=module", "--eval", [
       'import {createJsonReporter} from "@velocious/testing/reporters";',
       "const chunks = [];",
@@ -629,10 +670,54 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
       exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), ["--example", "missing"], {cwd: fixture}),
       (error) => error.code === 1 && /No tests matched/.test(error.stderr)
     )
+    const profileDirectory = path.join(fixture, "profile-specs")
+    await mkdir(profileDirectory)
+    const profileTestPaths = []
+    for (const name of ["a.test.js", "b.test.js"]) {
+      const testPath = path.join(profileDirectory, name)
+      await writeFile(testPath, [
+        'import {describe, it} from "@velocious/testing"',
+        `describe(${JSON.stringify(name)}, () => it("passes", () => {}))`
+      ].join("\n"))
+      profileTestPaths.push(testPath)
+    }
+    const profilePaths = [path.join(fixture, "profile-1.json"), path.join(fixture, "profile-2.json")]
+    for (const groupNumber of [1, 2]) {
+      const grouped = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [
+        "--groups", "2", "--group-number", String(groupNumber),
+        "--profile-json", profilePaths[groupNumber - 1], ...profileTestPaths
+      ], {cwd: fixture})
+      assert.match(grouped.stdout, new RegExp(`Running group ${groupNumber} of 2 \\(1 files\\)`))
+      const profile = JSON.parse(await readFile(profilePaths[groupNumber - 1], "utf8"))
+      assert.equal(profile.schema, "velocious.test-profile")
+      assert.deepEqual(profile.selection.shard, {groups: 2, groupNumber})
+    }
+    const timingManifestPath = path.join(fixture, "timings.json")
+    await writeFile(timingManifestPath, "existing\n")
+    await assert.rejects(
+      exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [
+        "timing-manifest:merge", "--output", timingManifestPath, profilePaths[0]
+      ], {cwd: fixture}),
+      (error) => error.code === 1 && /missing shard/i.test(error.stderr)
+    )
+    assert.equal(await readFile(timingManifestPath, "utf8"), "existing\n")
+    const merge = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [
+      "timing-manifest:merge", `--output=${timingManifestPath}`, profilePaths[1], profilePaths[0]
+    ], {cwd: fixture})
+    assert.match(merge.stdout, /Merged 2 test profile shards/u)
+    assert.deepEqual(Object.keys(JSON.parse(await readFile(timingManifestPath, "utf8"))), [
+      "profile-specs/a.test.js", "profile-specs/b.test.js"
+    ])
+    const timed = await exec(path.join(fixture, "node_modules", ".bin", "velocious-test"), [
+      "--groups=2", "--group-number=1", `--timing-manifest=${timingManifestPath}`, ...profileTestPaths
+    ], {cwd: fixture})
+    assert.match(timed.stdout, /Timing manifest coverage: measured=2 heuristic=0 stale=0/u)
     await exec("node", ["--input-type=module", "--eval", [
       'import "@velocious/testing";',
       'import "@velocious/testing/runner";',
       'import "@velocious/testing/node";',
+      'import "@velocious/testing/reporters";',
+      'import "@velocious/testing/profiling";',
       'import {createRequire} from "node:module";',
       'const require = createRequire(import.meta.url);',
       'try { require.resolve("velocious"); process.exitCode = 2 } catch (error) { if (error.code !== "MODULE_NOT_FOUND") throw error }'
@@ -643,4 +728,5 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
     await rm(fixture, {recursive: true, force: true})
     await rm(cacheDirectory, {recursive: true, force: true})
   }
+})
 })

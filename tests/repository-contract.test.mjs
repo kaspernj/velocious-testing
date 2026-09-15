@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import {lstat, readFile, readlink} from "node:fs/promises"
-import test from "node:test"
+import {describe, test} from "node:test"
+
+describe("repository contract", () => {
 
 test("package metadata exposes only supported ESM surfaces and no Velocious dependency", async () => {
   const packageData = JSON.parse(await readFile("package.json", "utf8"))
@@ -12,11 +14,16 @@ test("package metadata exposes only supported ESM surfaces and no Velocious depe
   assert.equal(packageData.type, "module")
   assert.equal(packageData.license, "MIT")
   assert.equal(packageData.engines.node, ">=20")
-  assert.deepEqual(Object.keys(packageData.exports), [".", "./runner", "./reporters", "./node", "./package.json"])
+  assert.deepEqual(Object.keys(packageData.exports), [".", "./runner", "./reporters", "./profiling", "./node", "./package.json"])
   assert.deepEqual(packageData.exports["./reporters"], {
     types: "./build/reporters.d.ts",
     import: "./build/reporters.js",
     default: "./build/reporters.js"
+  })
+  assert.deepEqual(packageData.exports["./profiling"], {
+    types: "./build/profiling.d.ts",
+    import: "./build/profiling.js",
+    default: "./build/profiling.js"
   })
   assert.equal(packageData.bin["velocious-test"], "./build/node/cli.js")
   assert.equal(packageData.scripts["release:patch"], "release-patch")
@@ -90,4 +97,5 @@ test("TensorBuzz fans out lockfile setup into supported Node tests and one quali
   assert.match(useNode, /^#!\/usr\/bin\/env bash\nset -euo pipefail\n/)
   assert.match(useNode, /curl .*--retry 5 .*https:\/\/nodejs\.org\/dist\/v\$\{version\}/s)
   assert.match(useNode, /test "\$\(node --version\)" = "v\$\{version\}"/)
+})
 })

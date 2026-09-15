@@ -43,6 +43,11 @@
       "import": "./build/reporters.js",
       "default": "./build/reporters.js"
     },
+    "./profiling": {
+      "types": "./build/profiling.d.ts",
+      "import": "./build/profiling.js",
+      "default": "./build/profiling.js"
+    },
     "./node": {
       "types": "./build/node/index.d.ts",
       "import": "./build/node/index.js",
