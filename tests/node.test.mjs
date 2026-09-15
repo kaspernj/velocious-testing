@@ -51,6 +51,16 @@ test("CLI parser exposes v1 filters, setup, retry, timeout, and explicit candida
   })
 })
 
+test("CLI parser accepts explicit default and JSON reporter selection", () => {
+  assert.equal(parseCliArguments(["--reporter", "default"]).reporter, "default")
+  assert.equal(parseCliArguments(["--reporter=json"]).reporter, "json")
+  assert.throws(() => parseCliArguments(["--reporter"]), /--reporter requires a value/u)
+  assert.throws(
+    () => parseCliArguments(["--reporter", "junit", "missing.test.js"]),
+    /--reporter must be one of: default, json/u
+  )
+})
+
 test("runNodeTests imports setup and test files, captures locations, filters, and resets context", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "velocious-testing-node-"))
   const context = createTestContext()

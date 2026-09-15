@@ -38,6 +38,11 @@
       "import": "./build/runner.js",
       "default": "./build/runner.js"
     },
+    "./reporters": {
+      "types": "./build/reporters.d.ts",
+      "import": "./build/reporters.js",
+      "default": "./build/reporters.js"
+    },
     "./node": {
       "types": "./build/node/index.d.ts",
       "import": "./build/node/index.js",
