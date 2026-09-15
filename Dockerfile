@@ -84,13 +84,15 @@ ADD https://registry.npmjs.org/opencode-ai/latest /tmp/cli-metadata/opencode.jso
 
 RUN npm install --global --prefix /usr/local \
     --strict-allow-scripts \
-    --allow-scripts="@anthropic-ai/claude-code,@moonshot-ai/kimi-code,node-pty,opencode-ai" \
+    --allow-scripts="@anthropic-ai/claude-code,@moonshot-ai/kimi-code,@qwen-code/audio-capture,node-pty,opencode-ai" \
     "@moonshot-ai/kimi-code" \
     "@openai/codex" \
+    "@qwen-code/qwen-code@0.23.3" \
     "@anthropic-ai/claude-code" \
     "opencode-ai" \
   && kimi --version \
   && codex --version \
+  && test "$(qwen --version)" = "0.23.3" \
   && claude --version \
   && opencode --version \
   && npm cache clean --force \

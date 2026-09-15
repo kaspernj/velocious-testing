@@ -91,3 +91,11 @@ export async function withJsonConsoleRouting(callback, target = console) {
     restore()
   }
 }
+
+/** @param {import("../runner.js").TestErrorRecord} error @returns {string} */
+export function formatTestError(error) {
+  const parts = [error.stack || `${error.name}: ${error.message}`]
+  if (error.cause) parts.push(`Caused by: ${formatTestError(error.cause)}`)
+  for (const child of error.errors || []) parts.push(`Related failure: ${formatTestError(child)}`)
+  return parts.join("\n")
+}

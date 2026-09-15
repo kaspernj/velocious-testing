@@ -26,6 +26,7 @@ export {
 } from "./matchers.js"
 export {createMockScope, mock} from "./mocks.js"
 export {createFakeTimers} from "./fake-timers.js"
+export {withTestCleanup} from "./test-cleanup.js"
 
 export const describe = defaultTestContext.describe
 export const fdescribe = defaultTestContext.fdescribe

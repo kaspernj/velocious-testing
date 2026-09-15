@@ -1,0 +1,2 @@
+- Recognize terminal errors and aggregate members across realms while preserving primary identity and causal stacks.
+- Complete terminal result/event accounting for synchronous and asynchronous argument-resolver failures without starting the executor, retrying or running later callbacks; preserve ordinary resolver rejection behavior.

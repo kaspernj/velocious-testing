@@ -260,6 +260,120 @@ test("table duplicate names are deterministic and generated declarations retain 
   ])
 })
 
+for (const kind of ["it", "test", "describe"]) {
+  test(`stored ${kind}.each builders capture once and retain location identity across invocations`, async () => {
+    for (const location of [{filePath: "/project/tests/stored.test.js", line: 101}, {}]) {
+      let builderCaptures = 0
+      const context = createTestContext({declarationLocator: () => {
+        builderCaptures += 1
+        return location
+      }})
+      const events = []
+      const received = []
+      const rows = [["first", 1], ["second", 2]]
+      context.events.on("declaration", (event) => events.push(event))
+
+      const builder = context[kind].each(rows)
+
+      assert.equal(builderCaptures, 1)
+      assert.deepEqual(context.registry.suites, [])
+      assert.deepEqual(events, [])
+      assert.deepEqual(received, [])
+
+      const ordinaryLocations = []
+      context.setDeclarationLocator(() => {
+        const ordinaryLocation = {filePath: "/project/tests/invocation.test.js", line: 201 + ordinaryLocations.length}
+        ordinaryLocations.push(ordinaryLocation)
+        return ordinaryLocation
+      })
+      const callback = kind === "describe" ? async (...args) => {
+        received.push(["start", ...args])
+        await Promise.resolve()
+        context.it("child", () => {})
+        received.push(["end", ...args])
+      } : (...args) => { received.push(args) }
+
+      await context.describe.only("focused parent", {tags: "parent", timeoutMs: 25}, () => {
+        return builder("first %# %s %d", {tags: "table", focus: true}, callback)
+      })
+      await context.describe.skip("skipped parent", () => builder("reused %# %s %d", callback))
+
+      const [focused, skipped] = context.registry.suites
+      const first = kind === "describe" ? focused.suites : focused.tests
+      const reused = kind === "describe" ? skipped.suites : skipped.tests
+      const generated = [...first, ...reused]
+      assert.deepEqual(generated.map((entry) => entry.name), [
+        "first 0 first 1", "first 1 second 2", "reused 0 first 1", "reused 1 second 2"
+      ])
+      assert.equal(focused.focus, true)
+      for (const entry of first) {
+        assert.deepEqual(entry.tags, ["parent", "table"])
+        assert.equal(entry.options.timeoutMs, 25)
+        assert.equal(entry.focus, true)
+        assert.equal(entry.state, "run")
+      }
+      for (const entry of reused) {
+        assert.equal(entry.focus, false)
+        assert.equal(entry.state, "skip")
+      }
+      for (const entry of generated) assert.equal(entry.location, location)
+      const generatedEvents = events.filter((event) => generated.includes(event.declaration))
+      assert.deepEqual(generatedEvents.map((event) => event.declaration), generated)
+      for (const event of generatedEvents) assert.equal(event.declaration.location, location)
+      assert.equal(builderCaptures, 1)
+      assert.equal(ordinaryLocations.length, kind === "describe" ? 6 : 2)
+      assert.equal(focused.location, ordinaryLocations[0])
+      assert.equal(skipped.location, ordinaryLocations[kind === "describe" ? 3 : 1])
+
+      if (kind === "describe") {
+        assert.deepEqual(received, [...rows, ...rows].flatMap((row) => [["start", ...row], ["end", ...row]]))
+        for (const [index, suite] of generated.entries()) {
+          assert.deepEqual(suite.tests.map((entry) => entry.name), ["child"])
+          assert.equal(suite.tests[0].location, ordinaryLocations[[1, 2, 4, 5][index]])
+          assert.equal(suite.tests[0].state, suite.state)
+        }
+      } else {
+        assert.deepEqual(received, [])
+        for (const [index, entry] of generated.entries()) {
+          assert.equal(entry.rowArguments, rows[index % rows.length])
+          await entry.callback(...entry.rowArguments)
+        }
+        assert.deepEqual(received, [...rows, ...rows])
+      }
+    }
+  })
+
+  test(`${kind}.each validates rows before capture and defers declaration errors until invocation`, () => {
+    let captures = 0
+    const context = createTestContext({declarationLocator: () => {
+      captures += 1
+      return {}
+    }})
+    const events = []
+    context.events.on("declaration", (event) => events.push(event))
+    for (const rows of ["not rows", {}, [], new Array(2)]) {
+      assert.throws(() => context[kind].each(rows), /each rows must/)
+    }
+    assert.equal(captures, 0)
+
+    const builder = context[kind].each([[1]])
+    assert.equal(captures, 1)
+    assert.throws(() => builder(42, () => {}), /each name must be a string/)
+    assert.throws(() => builder("unsupported %i", () => {}), /Unsupported table interpolation token/)
+    assert.throws(() => builder("missing callback"), /Invalid arguments/)
+    if (kind !== "describe") {
+      assert.throws(() => builder("outside suite", () => {}), /Tests must be declared inside a describe block/)
+    }
+    assert.equal(captures, 1)
+    assert.deepEqual(context.registry.suites, [])
+    assert.deepEqual(events, [])
+
+    const failure = new Error("locator failed")
+    context.setDeclarationLocator(() => { throw failure })
+    assert.throws(() => context[kind].each([[1]]), (error) => error === failure)
+  })
+}
+
 test("default bindings and installGlobals target the selected context", () => {
   defaultTestContext.reset({config: true})
   describe("bound", () => {

@@ -1,0 +1,1 @@
+Add the browser-safe `withTestCleanup()` root API for dynamic synchronous or asynchronous cleanup registration. Cleanups run in FIFO order and all execute after failures; a sole thrown value is preserved, while multiple primary and cleanup failures are reported through `AggregateError` in execution order.

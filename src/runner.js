@@ -9,12 +9,15 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
 /** @typedef {import("./context.js").TestContext} TestContext */
 /** @typedef {import("./context.js").SuiteDeclaration} SuiteDeclaration */
 /** @typedef {import("./context.js").TestDeclaration} TestDeclaration */
-/** @typedef {{name: string, message: string, stack?: string, errors?: TestErrorRecord[]}} TestErrorRecord */
+/** @typedef {{name: string, message: string, stack?: string, cause?: TestErrorRecord, errors?: TestErrorRecord[], terminalResource?: TerminalResource}} TestErrorRecord */
+/** @typedef {{name: string, message: string, stack?: string, cause?: unknown, errors?: unknown, terminalResource?: unknown}} ErrorLike */
+/** @typedef {{scope: "run", name: string}} TerminalResource */
+/** @typedef {{fullName: string, error: TestErrorRecord}} TerminalFailure */
 /** @typedef {{attemptNumber: number, durationMs: number, consoleOutput: string, error?: TestErrorRecord}} TestAttemptResult */
 /** @typedef {{fullName: string, status: "passed" | "failed", attempts: TestAttemptResult[], location: import("./context.js").DeclarationLocation, tags?: string[], error?: TestErrorRecord}} TestResult */
-/** @typedef {{fullName: string, status: "skipped" | "todo", location: import("./context.js").DeclarationLocation, tags: string[]}} NonRunTestResult */
-/** @typedef {{total: number, passed: number, failed: number, skipped: number}} TestRunCounts */
-/** @typedef {{protocolMajor: number, status: "passed" | "failed", noMatches: boolean, counts: TestRunCounts, tests: TestResult[], nonRunTests: NonRunTestResult[], errors: Array<{phase: string, suite: string, error: TestErrorRecord}>}} TestRunResult */
+/** @typedef {{fullName: string, status: "skipped" | "todo" | "not-run", reason?: TerminalFailure, location: import("./context.js").DeclarationLocation, tags: string[]}} NonRunTestResult */
+/** @typedef {{total: number, passed: number, failed: number, skipped: number, notRun?: number}} TestRunCounts */
+/** @typedef {{protocolMajor: number, status: "passed" | "failed", noMatches: boolean, terminalFailure?: TerminalFailure, counts: TestRunCounts, tests: TestResult[], nonRunTests: NonRunTestResult[], errors: Array<{phase: string, suite: string, error: TestErrorRecord}>}} TestRunResult */
 /** @typedef {{protocolMajor: number, timestamp: number, type: string, [key: string]: any}} RunnerEvent */
 /** @typedef {{onEvent: (event: RunnerEvent) => void | Promise<void>}} Reporter */
 /** @typedef {{failed: false} | {failed: true, error: any}} FailureState */
@@ -69,34 +72,67 @@ export {CONTEXT_SCHEMA_VERSION, PROTOCOL_MAJOR}
 const CONSOLE_METHODS = ["log", "info", "warn", "error", "debug"]
 const MAX_HOST_TIMER_DELAY = 2_147_483_647
 
-/** @param {any} error @returns {TestErrorRecord} */
-function errorRecord(error) {
-  if (error instanceof Error) {
-    /** @type {TestErrorRecord} */
-    const record = {name: error.name, message: error.message, stack: error.stack}
-    if (error instanceof AggregateError) record.errors = error.errors.map(errorRecord)
-    return record
-  }
-  return {name: "Error", message: String(error)}
+/**
+ * Narrows thrown errors structurally so another realm retains its causal data.
+ * @param {unknown} error Thrown value at the runner boundary.
+ * @returns {error is ErrorLike}
+ */
+function isErrorLike(error) {
+  return typeof error === "object" && error !== null &&
+    "name" in error && typeof error.name === "string" &&
+    "message" in error && typeof error.message === "string" &&
+    (!("stack" in error) || error.stack === undefined || typeof error.stack === "string")
 }
 
-/** @param {any} error @returns {any[]} */
-function flattenFailures(error) {
-  return error instanceof AggregateError && error.errors.length ? error.errors.flatMap(flattenFailures) : [error]
+/**
+ * Reads the explicit, framework-independent terminal resource contract.
+ * @param {ErrorLike} error Structurally narrowed error.
+ * @returns {TerminalResource | undefined}
+ */
+function terminalResource(error) {
+  const resource = error.terminalResource
+  if (!resource || typeof resource !== "object" || !("scope" in resource) || !("name" in resource)) return undefined
+  if (resource.scope !== "run" || typeof resource.name !== "string" || !resource.name) return undefined
+  return {scope: "run", name: resource.name}
+}
+
+/** @param {unknown} error @param {Set<ErrorLike>} [ancestors] @returns {TestErrorRecord} */
+function errorRecord(error, ancestors = new Set()) {
+  if (!isErrorLike(error)) return {name: "Error", message: String(error)}
+  if (ancestors.has(error)) return {name: error.name, message: "[Circular error reference]"}
+  const nextAncestors = new Set(ancestors)
+  nextAncestors.add(error)
+  /** @type {TestErrorRecord} */
+  const record = {name: error.name, message: error.message, stack: error.stack}
+  if (error.cause !== undefined) record.cause = errorRecord(error.cause, nextAncestors)
+  if (Array.isArray(error.errors)) record.errors = error.errors.map((child) => errorRecord(child, nextAncestors))
+  const resource = terminalResource(error)
+  if (resource) record.terminalResource = resource
+  return record
+}
+
+/** @param {TestErrorRecord} error @returns {boolean} */
+function hasTerminalResource(error) {
+  if (error.terminalResource) return true
+  if (error.cause && hasTerminalResource(error.cause)) return true
+  for (const child of error.errors || []) {
+    if (hasTerminalResource(child)) return true
+  }
+  return false
 }
 
 /** @param {FailureState} primary @param {any[]} cleanupFailures @param {string} label @returns {FailureState} */
 function aggregateFailures(primary, cleanupFailures, label) {
   const failures = [
-    ...(primary.failed ? flattenFailures(primary.error) : []),
-    ...cleanupFailures.flatMap(flattenFailures)
+    ...(primary.failed ? [primary.error] : []),
+    ...cleanupFailures
   ]
   if (failures.length === 0) return {failed: false}
   if (failures.length === 1) return {failed: true, error: failures[0]}
   const message = primary.failed ?
-    primary.error instanceof Error ? primary.error.message : String(primary.error) :
+    isErrorLike(primary.error) ? primary.error.message : String(primary.error) :
     `Multiple ${label} failures`
-  return {failed: true, error: new AggregateError(failures, message)}
+  return {failed: true, error: new AggregateError(failures, message, primary.failed ? {cause: primary.error} : undefined)}
 }
 
 /** @param {any} value @returns {string} */
@@ -356,7 +392,7 @@ export class TestRunner {
     }
     const selectedSet = new Set(runnable.map((entry) => entry.test))
     for (const suite of this.context.registry.suites) await this.runSuite(suite, [], selectedSet, result)
-    if (result.counts.failed || result.noMatches) result.status = "failed"
+    if (result.counts.failed || result.noMatches || result.terminalFailure) result.status = "failed"
     await this.emit({type: "run:finish", result})
     return result
   }
@@ -368,6 +404,10 @@ export class TestRunner {
     flatten(suite, ancestors, descendants, this.options.omitEmptySuiteNames)
     const selectedDescendants = descendants.filter((entry) => selected.has(entry.test))
     if (!selectedDescendants.length) return
+    if (result.terminalFailure) {
+      for (const entry of selectedDescendants) await this.recordNotRun(entry, result)
+      return
+    }
     const lineage = [...ancestors, suite]
     const fullName = buildSuiteFullName(lineage, this.options.omitEmptySuiteNames)
     const timeoutMs = suite.options.timeoutMs ?? (suite.options.timeoutSeconds !== undefined ? suite.options.timeoutSeconds * 1000 : undefined) ?? this.options.timeoutMs ?? this.context.config.defaultTimeoutMs
@@ -382,7 +422,14 @@ export class TestRunner {
         }
       } catch (error) { beforeAll = {failed: true, error} }
       if (beforeAll.failed) {
-        for (const entry of selectedDescendants) await this.recordSetupFailure(entry, beforeAll.error, result)
+        const setupError = errorRecord(beforeAll.error)
+        if (hasTerminalResource(setupError)) {
+          result.terminalFailure = {fullName, error: setupError}
+          result.errors.push({phase: "beforeAll", suite: fullName, error: setupError})
+          for (const entry of selectedDescendants) await this.recordNotRun(entry, result)
+        } else {
+          for (const entry of selectedDescendants) await this.recordSetupFailure(entry, beforeAll.error, result)
+        }
       } else {
         const beforeEach = lineage.flatMap((entry) => entry.hooks.beforeEach)
         const afterEach = lineage.flatMap((entry) => entry.hooks.afterEach)
@@ -463,8 +510,26 @@ export class TestRunner {
     }
     const afterAll = aggregateFailures({failed: false}, afterAllFailures, "afterAll")
     if (!afterAll.failed) return
-    result.errors.push({phase: "afterAll", suite: suite.name, error: errorRecord(afterAll.error)})
+    const cleanupError = errorRecord(afterAll.error)
+    result.errors.push({phase: "afterAll", suite: suite.name, error: cleanupError})
+    if (!result.terminalFailure && hasTerminalResource(cleanupError)) result.terminalFailure = {fullName, error: cleanupError}
     result.status = "failed"
+  }
+
+  /** @private @param {{fullName: string, test: TestDeclaration}} entry @param {TestRunResult} result @returns {Promise<void>} */
+  async recordNotRun(entry, result) {
+    if (!result.terminalFailure) throw new Error("Not-run results require a terminal failure")
+    /** @type {NonRunTestResult} */
+    const record = {
+      fullName: entry.fullName,
+      status: "not-run",
+      location: entry.test.location,
+      tags: entry.test.tags,
+      reason: result.terminalFailure
+    }
+    result.nonRunTests.push(record)
+    result.counts.notRun = (result.counts.notRun || 0) + 1
+    await this.emit({type: "test:not-run", test: record})
   }
 
   /** @private @param {any} entry @param {any} error @param {TestRunResult} result @returns {Promise<void>} */
@@ -478,16 +543,29 @@ export class TestRunner {
 
   /** @private @param {any} entry @param {import("./context.js").HookDeclaration[]} beforeEach @param {import("./context.js").HookDeclaration[]} afterEach @param {TestRunResult} result @returns {Promise<void>} */
   async runTest(entry, beforeEach, afterEach, result) {
+    if (result.terminalFailure) return await this.recordNotRun(entry, result)
     const retries = entry.test.options.retries ?? entry.test.options.retry ?? this.options.retries ?? this.context.config.retries
     const timeoutMs = entry.test.options.timeoutMs ?? (entry.test.options.timeoutSeconds !== undefined ? entry.test.options.timeoutSeconds * 1000 : undefined) ?? this.options.timeoutMs ?? this.context.config.defaultTimeoutMs
     /** @type {any} */
     const record = {fullName: entry.fullName, status: "failed", attempts: [], location: entry.test.location, tags: entry.test.tags}
     await this.emit({type: "test:start", fullName: entry.fullName})
     for (let attemptNumber = 1; attemptNumber <= retries + 1; attemptNumber += 1) {
-      const argsValue = await this.testArgumentResolver({context: this.context, suite: entry.suite, test: entry.test, attemptNumber})
-      const args = Array.isArray(argsValue) ? argsValue : [argsValue]
+      /** @type {FailureState} */
+      let resolution = {failed: false}
+      /** @type {Awaited<ReturnType<TestArgumentResolver>> | undefined} */
+      let argsValue
+      try {
+        argsValue = await this.testArgumentResolver({context: this.context, suite: entry.suite, test: entry.test, attemptNumber})
+      } catch (error) {
+        // Ordinary collaborator failures retain their existing run rejection.
+        // Terminal failures use the attempt's normal result/event completion.
+        if (!hasTerminalResource(errorRecord(error))) throw error
+        resolution = {failed: true, error}
+      }
       const startedAt = realMonotonicNow()
       const captured = await captureConsole(async () => {
+        if (resolution.failed) throw resolution.error
+        const args = Array.isArray(argsValue) ? argsValue : [argsValue]
         const input = {context: this.context, suite: entry.suite, test: entry.test, attemptNumber, beforeEach, afterEach, args, timeoutMs, fullName: entry.fullName}
         let defaultInvoked = false
         const execution = Promise.resolve(this.attemptExecutor({...input, defaultExecute: () => {
@@ -505,14 +583,18 @@ export class TestRunner {
         error: captured.status === "failed" ? errorRecord(captured.error) : undefined
       }
       record.attempts.push(attempt)
-      await this.emit({type: "attempt:finish", fullName: entry.fullName, attempt})
+      if (attempt.error && hasTerminalResource(attempt.error)) {
+        result.terminalFailure = {fullName: entry.fullName, error: attempt.error}
+      }
+      await this.emit({type: "attempt:finish", fullName: entry.fullName, attempt, terminalFailure: result.terminalFailure})
       if (captured.status === "completed") {
         record.status = "passed"
         delete record.error
         result.counts.passed += 1
         break
       }
-      record.error = errorRecord(captured.error)
+      record.error = attempt.error
+      if (result.terminalFailure) break
     }
     if (record.status === "failed") result.counts.failed += 1
     result.tests.push(record)
