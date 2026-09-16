@@ -6,6 +6,8 @@ Guidance for every coding agent working in `@velocious/testing`.
 
 This package is independently versioned and independent of Velocious. It must never depend on, peer-depend on, import, dynamically resolve, or use Velocious source at runtime. Framework adapters belong in downstream packages. The root and `./runner` entry points are browser/Metro-safe and must not import Node built-ins or contain raw `import.meta` syntax; Node behavior belongs under `src/node` and the `./node` export.
 
+This package is the canonical owner of reusable expectation, equality, asymmetric-matcher, and change-assertion behavior. Consumer frameworks may retain thin global or legacy re-export facades, but must not carry a second matcher algorithm. `isArrayContaining`, `isObjectContaining`, `matchArrayContaining`, and `matchObject` are browser-safe package compatibility helpers and must delegate to the same branded asymmetric matcher and equality engine as `Expect`. Preserve assertion pass/fail semantics across facade migrations; where only diagnostic wording differs, the documented package diagnostic is canonical.
+
 The default context protocol major is public compatibility state. Changes to its global symbol, protocol major, schema, declarations, results, or event shapes require migration documentation and compatibility tests. Keep collaborators focused: importer, attempt executor, test argument resolver, suite hook executor, and reporter.
 
 ## Development

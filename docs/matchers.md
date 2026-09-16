@@ -31,6 +31,29 @@ expect(response).toEqual({
 
 `anything()` matches every value except `null` and `undefined`. `any(Constructor)` recognizes the primitive constructors and otherwise uses `instanceof`. `stringContaining(string)` requires a string fragment. `stringMatching(stringOrRegExp)` accepts a pattern string or regular expression and never changes a caller-owned expression's `lastIndex`. `arrayContaining(array)` requires a dense array; an explicit `undefined` element remains valid. Recursive `objectContaining()` and `arrayContaining()` patterns are cycle-safe for matching, non-matching comparisons, and failure diagnostics. All six factories are also named root exports.
 
+## Compatibility helpers
+
+The browser-safe root provides four low-level helpers for downstream frameworks that retain legacy matcher facades:
+
+```js
+import {
+  isArrayContaining,
+  isObjectContaining,
+  matchArrayContaining,
+  matchObject
+} from "@velocious/testing"
+
+isArrayContaining(expect.arrayContaining([1])) // true
+isObjectContaining(expect.objectContaining({id: 1})) // true
+matchArrayContaining([1, 2], [2]) // {matches: true, differences: {}}
+matchObject({id: 1, name: "Ada"}, {id: 2})
+// {matches: false, differences: {id: [2, 1]}}
+```
+
+The predicates accept any value and return true only for a package-branded matcher of the corresponding kind; a plain object with a `__velociousMatcher` string cannot forge that identity. `matchArrayContaining(actual, expectedArray)` performs the same duplicate-aware unordered subset comparison as `arrayContaining`. `matchObject(actual, expectedObjectOrArray)` performs the same recursive partial comparison as `toMatchObject`. Both return `{matches: boolean, differences: Record<string, [expected, actual]>}`. Compatibility difference keys omit the leading `$.` used in formatted package diagnostics, use `$` for a root mismatch, and represent a missing side as `undefined`.
+
+These are result adapters, not another matcher implementation: asymmetric dispatch, cycle handling, dates, regular expressions, sets, arrays, objects, and nested package matchers all run through the canonical equality engine. New application assertions should prefer `expect`; the helpers exist so consumer frameworks can reduce old paths to thin re-exports.
+
 ## Custom matchers
 
 `expect.extend()` atomically registers own, string-named matcher functions for that physical module instance:
@@ -67,3 +90,5 @@ The root declarations export `AsymmetricMatcher`, `CustomMatcher`, `CustomMatche
 ## Structural differences
 
 Positive equality, partial-object, containment, attribute, and mock-argument failures append structural differences without snapshots or Node-only inspection. Paths start at `$`, object keys are sorted, array indexes are explicit, and `<missing>` is distinct from `undefined`. Values are formatted deterministically with support for cycles and public asymmetric descriptions. At most 20 differences are displayed; the final line reports the omitted count. For `toHaveBeenCalledWith`, the call with the fewest structural differences is shown, with the first call winning ties.
+
+Compatibility across framework facades is defined by assertion pass/fail behavior and the documented result shapes above. When an older facade differs only in exact error wording or formatting, this package's documented and tested diagnostic is canonical.
