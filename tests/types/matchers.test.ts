@@ -3,6 +3,10 @@ import {
   anything,
   arrayContaining,
   expect,
+  isArrayContaining,
+  isObjectContaining,
+  matchArrayContaining,
+  matchObject,
   objectContaining,
   stringContaining,
   stringMatching,
@@ -36,6 +40,24 @@ const asymmetricValues: AsymmetricMatcher[] = [
   expect.stringMatching("value")
 ]
 void asymmetricValues
+
+const arrayMatcher = arrayContaining([1])
+const objectMatcher = objectContaining({id: 1})
+const arrayMatcherCheck: boolean = isArrayContaining(arrayMatcher)
+const objectMatcherCheck: boolean = isObjectContaining(objectMatcher)
+const arrayMatchResult = matchArrayContaining([{id: 1}], [objectMatcher])
+const objectMatchResult = matchObject({id: 1, name: "Ada"}, {id: 1})
+const arrayMatches: boolean = arrayMatchResult.matches
+const objectDifferences: Record<string, [any, any]> = objectMatchResult.differences
+void arrayMatcherCheck
+void objectMatcherCheck
+void arrayMatches
+void objectDifferences
+
+// @ts-expect-error matchArrayContaining() requires an expected array.
+matchArrayContaining([], {id: 1})
+// @ts-expect-error matchObject() requires an expected object or array.
+matchObject({}, 1)
 
 // @ts-expect-error any() requires a constructor function.
 anyValue(null)

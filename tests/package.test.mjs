@@ -430,7 +430,7 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
       assert.match(timerDeclarations, new RegExp(`export type ${publicType}\\b`, "u"))
     }
     assert.match(rootDeclarations, /createMockScope, mock.*\.\/mocks\.js/u)
-    for (const publicName of ["any", "anything", "Expect", "PromiseExpectation", "stringContaining", "stringMatching"]) {
+    for (const publicName of ["any", "anything", "Expect", "isArrayContaining", "isObjectContaining", "matchArrayContaining", "matchObject", "PromiseExpectation", "stringContaining", "stringMatching"]) {
       assert.match(rootDeclarations, new RegExp(`\\b${publicName}\\b`, "u"))
     }
     for (const publicType of ["AsymmetricMatcher", "CustomMatcher", "CustomMatcherContext", "CustomMatcherDefinitions", "CustomMatcherResult"]) {
@@ -466,6 +466,9 @@ test("packed tarball has explicit exports, resolvable maps, declarations, execut
       `const first = await import(${JSON.stringify(path.join(installedPackage, "build", "index.js"))});`,
       `const second = await import(${JSON.stringify(path.join(physicalCopy, "build", "index.js"))});`,
       'if (first.defaultTestContext !== second.defaultTestContext) throw new Error("schema-3 copies split the default context")',
+      'if (!second.isArrayContaining(first.arrayContaining([1]))) throw new Error("array matcher brand was not shared")',
+      'if (!second.isObjectContaining(first.objectContaining({id: 1}))) throw new Error("object matcher brand was not shared")',
+      'if (second.isArrayContaining({__velociousMatcher: "arrayContaining", value: [1]})) throw new Error("array matcher brand was forgeable")',
       'first.describe("shared physical tree", () => first.it("visible", () => {}));',
       'if (second.defaultTestContext.registry.suites.at(-1)?.name !== "shared physical tree") throw new Error("registration was not shared")',
       'console.log(`${first.defaultTestContext.protocolMajor}/${first.defaultTestContext.schemaVersion}`)'

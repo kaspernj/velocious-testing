@@ -4,6 +4,7 @@
 /** @typedef {{__velociousMatcher: "arrayContaining" | "objectContaining", value: any}} ContainingMatcher */
 /** @typedef {ContainingMatcher | {__velociousMatcher: "anything"} | {__velociousMatcher: "any" | "stringContaining" | "stringMatching", value: any}} AsymmetricMatcher */
 /** @typedef {{path: string, expected: any, actual: any}} Difference */
+/** @typedef {{matches: boolean, differences: Record<string, [any, any]>}} MatchResult */
 
 const MAX_DIFFERENCES = 20
 const MISSING = Symbol("missing")
@@ -166,8 +167,9 @@ function partialMatchesInternal(actual, expected, pairs) {
 /** @param {any} actual @param {any} expected @returns {boolean} */
 export function partialMatches(actual, expected) { return partialMatchesInternal(actual, expected, []) }
 
-/** @param {string} path @param {string} key @returns {string} */
-function propertyPath(path, key) {
+/** @param {string} path @param {string} key @param {boolean} [compatibility] @returns {string} */
+function propertyPath(path, key, compatibility = false) {
+  if (compatibility) return path ? `${path}.${key}` : key
   return /^[A-Za-z_$][\w$]*$/u.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`
 }
 
@@ -181,19 +183,19 @@ function markPair(pairs, actual, expected) {
 
 /** @param {Difference[]} differences @param {string} path @param {any} expected @param {any} actual @returns {void} */
 function addDifference(differences, path, expected, actual) {
-  differences.push({path, expected, actual})
+  differences.push({path: path || "$", expected, actual})
 }
 
-/** @param {any} actual @param {any} expected @param {string} path @param {Difference[]} differences @param {[any, any][]} pairs @returns {void} */
-function collectFull(actual, expected, path, differences, pairs) {
+/** @param {any} actual @param {any} expected @param {string} path @param {Difference[]} differences @param {[any, any][]} pairs @param {boolean} [compatibility] @returns {void} */
+function collectFull(actual, expected, path, differences, pairs, compatibility = false) {
   if (matches(actual, expected)) return
   if (isAsymmetricMatcher(expected)) {
     if (expected.__velociousMatcher === "objectContaining" && actual && typeof actual === "object") {
       if (markPair(pairs, actual, expected.value)) return
       for (const key of Object.keys(expected.value).sort()) {
-        const nextPath = propertyPath(path, key)
+        const nextPath = propertyPath(path, key, compatibility)
         if (!Object.prototype.hasOwnProperty.call(actual, key)) addDifference(differences, nextPath, expected.value[key], MISSING)
-        else collectFull(actual[key], expected.value[key], nextPath, differences, pairs)
+        else collectFull(actual[key], expected.value[key], nextPath, differences, pairs, compatibility)
       }
       return
     }
@@ -203,7 +205,9 @@ function collectFull(actual, expected, path, differences, pairs) {
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual)) { addDifference(differences, path, expected, actual); return }
     if (markPair(pairs, actual, expected)) return
-    if (actual.length !== expected.length) addDifference(differences, `${path}.length`, expected.length, actual.length)
+    if (actual.length !== expected.length) {
+      addDifference(differences, path ? `${path}.length` : "length", expected.length, actual.length)
+    }
     const length = Math.max(actual.length, expected.length)
     for (let index = 0; index < length; index += 1) {
       const expectedOwns = Object.hasOwn(expected, index)
@@ -211,7 +215,7 @@ function collectFull(actual, expected, path, differences, pairs) {
       if (!expectedOwns && !actualOwns) continue
       if (!expectedOwns) addDifference(differences, `${path}[${index}]`, MISSING, actual[index])
       else if (!actualOwns) addDifference(differences, `${path}[${index}]`, expected[index], MISSING)
-      else collectFull(actual[index], expected[index], `${path}[${index}]`, differences, pairs)
+      else collectFull(actual[index], expected[index], `${path}[${index}]`, differences, pairs, compatibility)
     }
     return
   }
@@ -220,35 +224,39 @@ function collectFull(actual, expected, path, differences, pairs) {
     if (markPair(pairs, actual, expected)) return
     const keys = [...new Set([...Object.keys(actual), ...Object.keys(expected)])].sort()
     for (const key of keys) {
-      const nextPath = propertyPath(path, key)
+      const nextPath = propertyPath(path, key, compatibility)
       const expectedOwns = Object.prototype.hasOwnProperty.call(expected, key)
       const actualOwns = Object.prototype.hasOwnProperty.call(actual, key)
       if (!expectedOwns) addDifference(differences, nextPath, MISSING, actual[key])
       else if (!actualOwns) addDifference(differences, nextPath, expected[key], MISSING)
-      else collectFull(actual[key], expected[key], nextPath, differences, pairs)
+      else collectFull(actual[key], expected[key], nextPath, differences, pairs, compatibility)
     }
     return
   }
   addDifference(differences, path, expected, actual)
 }
 
-/** @param {any} actual @param {any} expected @param {string} path @param {Difference[]} differences @param {[any, any][]} pairs @returns {void} */
-function collectPartial(actual, expected, path, differences, pairs) {
+/** @param {any} actual @param {any} expected @param {string} path @param {Difference[]} differences @param {[any, any][]} pairs @param {boolean} [compatibility] @returns {void} */
+function collectPartial(actual, expected, path, differences, pairs, compatibility = false) {
   if (partialMatches(actual, expected)) return
-  if (isAsymmetricMatcher(expected)) { collectFull(actual, expected, path, differences, pairs); return }
+  if (isAsymmetricMatcher(expected)) {
+    collectFull(actual, expected, path, differences, pairs, compatibility)
+    return
+  }
   if (Array.isArray(expected)) {
     if (!Array.isArray(actual)) { addDifference(differences, path, expected, actual); return }
     if (markPair(pairs, actual, expected)) return
-    expected.forEach((item, index) => collectPartial(actual[index], item, `${path}[${index}]`, differences, pairs))
+    expected.forEach((item, index) =>
+      collectPartial(actual[index], item, `${path}[${index}]`, differences, pairs, compatibility))
     return
   }
   if (isPlainObject(expected)) {
     if (!actual || typeof actual !== "object") { addDifference(differences, path, expected, actual); return }
     if (markPair(pairs, actual, expected)) return
     for (const key of Object.keys(expected).sort()) {
-      const nextPath = propertyPath(path, key)
+      const nextPath = propertyPath(path, key, compatibility)
       if (!Object.prototype.hasOwnProperty.call(actual, key)) addDifference(differences, nextPath, expected[key], MISSING)
-      else collectPartial(actual[key], expected[key], nextPath, differences, pairs)
+      else collectPartial(actual[key], expected[key], nextPath, differences, pairs, compatibility)
     }
     return
   }
@@ -323,16 +331,42 @@ function stableFormatInternal(value, seen, state, depth) {
 /** @param {any} value @returns {string} */
 export function stableFormat(value) { return stableFormatInternal(value, new Map(), {next: 1}, 0) }
 
-/** @param {any} actual @param {any} expected @param {{partial?: boolean}} [options] @returns {Difference[]} */
+/** @param {any} actual @param {any} expected @param {{compatibility?: boolean, partial?: boolean}} [options] @returns {Difference[]} */
 function differences(actual, expected, options = {}) {
   /** @type {Difference[]} */
   const output = []
-  if (options.partial) collectPartial(actual, expected, "$", output, [])
-  else collectFull(actual, expected, "$", output, [])
+  const path = options.compatibility ? "" : "$"
+  if (options.partial) collectPartial(actual, expected, path, output, [], options.compatibility)
+  else collectFull(actual, expected, path, output, [], options.compatibility)
   if (output.length === 0 && !(options.partial ? partialMatches(actual, expected) : matches(actual, expected))) {
     output.push({path: "$", expected, actual})
   }
   return output
+}
+
+/**
+ * Produces the compatibility result shape from the canonical difference traversal.
+ * @param {any} actual
+ * @param {any} expected
+ * @param {{partial?: boolean}} [options]
+ * @returns {MatchResult}
+ */
+export function matchResult(actual, expected, options = {}) {
+  const found = differences(actual, expected, {...options, compatibility: true})
+  /** @type {Record<string, [any, any]>} */
+  const resultDifferences = {}
+  for (const difference of found) {
+    Object.defineProperty(resultDifferences, difference.path, {
+      configurable: true,
+      enumerable: true,
+      value: [
+        difference.expected === MISSING ? undefined : difference.expected,
+        difference.actual === MISSING ? undefined : difference.actual
+      ],
+      writable: true
+    })
+  }
+  return {matches: found.length === 0, differences: resultDifferences}
 }
 
 /** @param {any} actual @param {any} expected @param {{partial?: boolean}} [options] @returns {string} */
