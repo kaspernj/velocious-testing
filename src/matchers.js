@@ -105,9 +105,14 @@ export function isObjectContaining(value) {
 
 /** @param {any} actual @param {any[]} expected @returns {import("./equality.js").MatchResult} */
 export function matchArrayContaining(actual, expected) {
-  const result = matchResult(actual, createAsymmetricMatcher("arrayContaining", expected))
+  const result = matchResult(actual, arrayContaining(expected))
   if (result.matches) return result
   return {matches: false, differences: {$: [expected, actual]}}
+}
+
+/** @param {any} expected @returns {void} */
+function validateObjectMatchExpected(expected) {
+  if (!expected || typeof expected !== "object") throw new Error(`Expected object but got ${typeof expected}`)
 }
 
 /**
@@ -116,6 +121,7 @@ export function matchArrayContaining(actual, expected) {
  * @returns {import("./equality.js").MatchResult}
  */
 export function matchObject(actual, expected) {
+  validateObjectMatchExpected(expected)
   return matchResult(actual, expected, {partial: true})
 }
 
@@ -407,7 +413,7 @@ export class Expect {
 
   /** @param {any} expected */
   toMatchObject(expected) {
-    if (!expected || typeof expected !== "object") throw new Error(`Expected object but got ${typeof expected}`)
+    validateObjectMatchExpected(expected)
     const equal = partialMatches(this.value, expected)
     const difference = equal ? "" : formatDiff(this.value, expected, {partial: true})
     const suffix = difference ? `\n${difference}` : ""

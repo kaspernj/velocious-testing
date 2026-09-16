@@ -86,6 +86,14 @@ test("matchArrayContaining returns the legacy result shape through canonical equ
     matches: false,
     differences: {$: [[1], "not an array"]}
   })
+  assert.throws(() => matchArrayContaining([], "nope"), {
+    name: "Error",
+    message: "Expected array but got string"
+  })
+  assert.throws(() => matchArrayContaining([undefined], new Array(1)), {
+    name: "TypeError",
+    message: "arrayContaining() requires a dense array"
+  })
 })
 
 test("matchObject returns path-keyed legacy differences through canonical partial equality", () => {
@@ -95,6 +103,10 @@ test("matchObject returns path-keyed legacy differences through canonical partia
   assert.deepEqual(matchObject(
     {items: [{id: 1, name: "Ada"}], extra: true},
     {items: [{id: 1}]}
+  ), {matches: true, differences: {}})
+  assert.deepEqual(matchObject(
+    [{id: 1, name: "Ada"}],
+    [{id: 1}]
   ), {matches: true, differences: {}})
   assert.deepEqual(matchObject(
     {items: [1, 2, 3]},
@@ -118,6 +130,12 @@ test("matchObject returns path-keyed legacy differences through canonical partia
     matches: false,
     differences: {"a-b": [3, 1], "nested.x.y": [4, 2]}
   })
+  for (const expected of [null, undefined, false, 1, "value", Symbol("value"), () => {}]) {
+    assert.throws(() => matchObject(expected, expected), {
+      name: "Error",
+      message: `Expected object but got ${typeof expected}`
+    })
+  }
 })
 
 test("legacy formatting scenarios retain observable failure information", () => {
