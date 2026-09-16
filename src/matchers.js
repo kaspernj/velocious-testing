@@ -179,6 +179,22 @@ function matchesLegacyExpectationValue(actual, expected) {
   return actual == expected
 }
 
+/** @param {any} value @returns {boolean} */
+function isSingletonPrimitiveArray(value) {
+  return Array.isArray(value) && value.length === 1 && Object.hasOwn(value, 0) && !isObjectValue(value[0])
+}
+
+/** @param {any} actual @param {any} expected @returns {boolean} */
+function matchesLegacyTopLevelValue(actual, expected) {
+  if (isSingletonPrimitiveArray(actual) && !isObjectValue(expected)) {
+    return matchesLegacyExpectationValue(actual[0], expected)
+  }
+  if (!isObjectValue(actual) && isSingletonPrimitiveArray(expected)) {
+    return matchesLegacyExpectationValue(actual, expected[0])
+  }
+  return matchesLegacyExpectationValue(actual, expected)
+}
+
 /** @param {any} value @returns {any[][]} */
 function mockCalls(value) {
   if (!isMockFunction(value)) throw new TypeError("Expected a mock function")
@@ -405,7 +421,7 @@ export class Expect {
 
   /** @param {any} expected */
   toEqual(expected) {
-    const equal = matchesLegacyExpectationValue(this.value, expected)
+    const equal = matchesLegacyTopLevelValue(this.value, expected)
     if (isContaining(expected)) {
       const displayed = expected.value
       const difference = equal ? "" : formatDiff(this.value, expected)
