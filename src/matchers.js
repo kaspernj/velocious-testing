@@ -166,6 +166,19 @@ function quotedValue(value) {
   return typeof value === "string" ? minifiedStringify(value) : formatValue(value)
 }
 
+/** @param {any} value @returns {boolean} */
+function isObjectValue(value) {
+  return value !== null && (typeof value === "object" || typeof value === "function")
+}
+
+/** @param {any} actual @param {any} expected @returns {boolean} */
+function matchesLegacyExpectationValue(actual, expected) {
+  if (isObjectValue(actual) || isObjectValue(expected)) return matches(actual, expected)
+  // Legacy expectation boundaries intentionally use JavaScript's abstract equality for primitive values.
+  // eslint-disable-next-line eqeqeq
+  return actual == expected
+}
+
 /** @param {any} value @returns {any[][]} */
 function mockCalls(value) {
   if (!isMockFunction(value)) throw new TypeError("Expected a mock function")
@@ -392,7 +405,7 @@ export class Expect {
 
   /** @param {any} expected */
   toEqual(expected) {
-    const equal = matches(this.value, expected)
+    const equal = matchesLegacyExpectationValue(this.value, expected)
     if (isContaining(expected)) {
       const displayed = expected.value
       const difference = equal ? "" : formatDiff(this.value, expected)
@@ -535,9 +548,9 @@ export class Expect {
   /** @returns {Promise<any>} */
   async execute() {
     if (typeof this.value !== "function") throw new Error(`Expected function but got ${typeof this.value}`)
-    const before = await Promise.all(this.changes.map((change) => change.probe()))
+    const before = await observeChangesSequentially(this.changes)
     const result = await this.value()
-    const after = await Promise.all(this.changes.map((change) => change.probe()))
+    const after = await observeChangesSequentially(this.changes)
     this.changes.forEach((change, index) => {
       const delta = after[index] - before[index]
       if (change.expectedDelta === undefined) throw new Error("Change expectation requires by(count)")
@@ -550,17 +563,25 @@ export class Expect {
   toHaveAttributes(expected) {
     /** @type {Record<string, any>} */
     const actual = {}
+    let equal = true
     for (const key of Object.keys(expected)) {
       if (typeof this.value?.[key] !== "function") throw new Error(`${this.value?.constructor?.name || "Object"} doesn't respond to ${key}`)
       actual[key] = this.value[key]()
+      if (!matchesLegacyExpectationValue(actual[key], expected[key])) equal = false
     }
-    const equal = matches(actual, expected)
     this.assert(
       equal,
       `Object had different values:\n${formatDiff(actual, expected)}`,
       `Object had unexpected values: ${minifiedStringify(actual)}`
     )
   }
+}
+
+/** @param {ChangeExpectation[]} changes @returns {Promise<any[]>} */
+async function observeChangesSequentially(changes) {
+  const values = []
+  for (const change of changes) values.push(await change.probe())
+  return values
 }
 
 /** @param {string} name @param {CustomMatcherResult} result @param {CustomMatcherContext} context @returns {void} */

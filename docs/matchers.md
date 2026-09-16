@@ -87,6 +87,14 @@ declare module "@velocious/testing" {
 
 The root declarations export `AsymmetricMatcher`, `CustomMatcher`, `CustomMatcherContext`, `CustomMatcherDefinitions`, and `CustomMatcherResult` for reusable helper typing.
 
+## Legacy expectation compatibility
+
+`toEqual` preserves the legacy facade's coercive comparison only when both top-level values are non-objects. For example, `expect("1").toEqual(1)` and `expect(null).toEqual(undefined)` pass. Once comparison enters an object, array, set, or asymmetric pattern, the canonical equality engine remains strict, so `{value: "1"}` does not equal `{value: 1}` and `["1"]` does not equal `[1]`.
+
+`toHaveAttributes` applies that same compatibility boundary independently to each returned primitive attribute. Nested objects and arrays returned by an attribute are still compared by the strict structural engine.
+
+Chained `toChange`/`andChange` observations are deterministic: every before probe is awaited sequentially in declaration order, then the action is awaited, then every after probe is awaited sequentially in the same order, and only then are deltas validated. If an earlier probe rejects, no later probe in that phase starts.
+
 ## Structural differences
 
 Positive equality, partial-object, containment, attribute, and mock-argument failures append structural differences without snapshots or Node-only inspection. Paths start at `$`, object keys are sorted, array indexes are explicit, and `<missing>` is distinct from `undefined`. Values are formatted deterministically with support for cycles and public asymmetric descriptions. At most 20 differences are displayed; the final line reports the omitted count. For `toHaveBeenCalledWith`, the call with the fewest structural differences is shown, with the first call winning ties.
