@@ -38,6 +38,54 @@ test("toEqual preserves loose legacy comparison only for top-level primitive val
   assert.throws(() => expect(["1"]).toEqual([1]), /Diff:/u)
 })
 
+test("toEqual preserves top-level singleton primitive array compatibility in both directions", () => {
+  expect(["sql"]).toEqual("sql")
+  expect(1).toEqual([1])
+  expect(["1"]).toEqual(1)
+  expect(1).toEqual(["1"])
+})
+
+test("singleton primitive array compatibility preserves mismatch and negation behavior", () => {
+  expect(["sql"]).not.toEqual("other")
+  expect(2).not.toEqual([1])
+  assert.throws(() => expect(["sql"]).not.toEqual("sql"), /unexpected equal/u)
+  assert.throws(() => expect(1).not.toEqual([1]), /unexpected equal/u)
+})
+
+test("singleton array compatibility stays top-level and never coerces reference values", () => {
+  expect({value: ["sql"]}).not.toEqual({value: "sql"})
+  expect([[1]]).not.toEqual([1])
+  assert.throws(() => expect({value: ["sql"]}).toEqual({value: "sql"}), /Diff:/u)
+  assert.throws(() => expect([[1]]).toEqual([1]), /Diff:/u)
+
+  const record = {value: () => ["sql"]}
+  expect(record).not.toHaveAttributes({value: "sql"})
+  assert.throws(() => expect(record).toHaveAttributes({value: "sql"}), /different values/u)
+
+  let objectConversions = 0
+  const objectValue = {
+    [Symbol.toPrimitive]() {
+      objectConversions += 1
+      return "coerced"
+    }
+  }
+  let functionConversions = 0
+  const functionValue = () => {}
+  Object.defineProperty(functionValue, Symbol.toPrimitive, {
+    value() {
+      functionConversions += 1
+      return "coerced"
+    }
+  })
+
+  for (const value of [objectValue, functionValue]) {
+    expect([value]).not.toEqual("coerced")
+    expect("coerced").not.toEqual([value])
+  }
+  assert.equal(objectConversions, 0)
+  assert.equal(functionConversions, 0)
+})
+
 test("toEqual keeps functions out of top-level primitive coercion", () => {
   function received() {}
   const source = String(received)

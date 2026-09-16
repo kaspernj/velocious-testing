@@ -89,7 +89,7 @@ The root declarations export `AsymmetricMatcher`, `CustomMatcher`, `CustomMatche
 
 ## Legacy expectation compatibility
 
-`toEqual` preserves the legacy facade's coercive comparison only when both top-level values are non-objects. For example, `expect("1").toEqual(1)` and `expect(null).toEqual(undefined)` pass. Once comparison enters an object, array, set, or asymmetric pattern, the canonical equality engine remains strict, so `{value: "1"}` does not equal `{value: 1}` and `["1"]` does not equal `[1]`.
+`toEqual` preserves the legacy facade's coercive comparison when both top-level values are primitives. For example, `expect("1").toEqual(1)` and `expect(null).toEqual(undefined)` pass. A top-level dense singleton array containing a primitive also compares its element coercively with a primitive in either direction, so `expect(["sql"]).toEqual("sql")` and `expect(1).toEqual([1])` pass. This exception never applies recursively: `{value: ["sql"]}` does not equal `{value: "sql"}`, and `[[1]]` does not equal `[1]`. Functions, arbitrary objects, and singleton arrays containing reference values continue through the strict canonical equality engine without executing coercion hooks.
 
 `toHaveAttributes` applies that same compatibility boundary independently to each returned primitive attribute. Nested objects and arrays returned by an attribute are still compared by the strict structural engine.
 
