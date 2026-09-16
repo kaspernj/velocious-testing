@@ -38,6 +38,30 @@ test("toEqual preserves loose legacy comparison only for top-level primitive val
   assert.throws(() => expect(["1"]).toEqual([1]), /Diff:/u)
 })
 
+test("toEqual keeps functions out of top-level primitive coercion", () => {
+  function received() {}
+  const source = String(received)
+
+  expect(received).not.toEqual(source)
+  assert.throws(() => expect(received).toEqual(source), /wasn't equal/u)
+})
+
+test("toEqual does not execute function primitive conversion hooks", () => {
+  let conversions = 0
+  const received = () => {}
+  Object.defineProperty(received, Symbol.toPrimitive, {
+    value() {
+      conversions += 1
+      return "coerced"
+    }
+  })
+
+  assert.throws(() => expect(received).toEqual("coerced"), /wasn't equal/u)
+  assert.equal(conversions, 0)
+  expect(received).not.toEqual("coerced")
+  assert.equal(conversions, 0)
+})
+
 test("containing matchers compose and preserve duplicate requirements", () => {
   expect({name: "Ada", flags: ["a", "b"]}).toEqual(objectContaining({flags: arrayContaining(["b"])}))
   expect([{id: 1}, {id: 2}]).toEqual(arrayContaining([objectContaining({id: 2})]))

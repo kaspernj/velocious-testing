@@ -168,7 +168,7 @@ function quotedValue(value) {
 
 /** @param {any} value @returns {boolean} */
 function isObjectValue(value) {
-  return value !== null && typeof value === "object"
+  return value !== null && (typeof value === "object" || typeof value === "function")
 }
 
 /** @param {any} actual @param {any} expected @returns {boolean} */
