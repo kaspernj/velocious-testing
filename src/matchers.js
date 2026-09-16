@@ -7,6 +7,7 @@ import {
   formatDiff,
   isAsymmetricMatcher,
   isPlainObject,
+  matchResult,
   matches,
   matchesExpression,
   partialMatches,
@@ -93,9 +94,34 @@ export function stringMatching(value) {
 }
 
 /** @param {any} value @returns {value is ContainingMatcher} */
+export function isArrayContaining(value) {
+  return isAsymmetricMatcher(value) && value.__velociousMatcher === "arrayContaining"
+}
+
+/** @param {any} value @returns {value is ContainingMatcher} */
+export function isObjectContaining(value) {
+  return isAsymmetricMatcher(value) && value.__velociousMatcher === "objectContaining"
+}
+
+/** @param {any} actual @param {any[]} expected @returns {import("./equality.js").MatchResult} */
+export function matchArrayContaining(actual, expected) {
+  const result = matchResult(actual, createAsymmetricMatcher("arrayContaining", expected))
+  if (result.matches) return result
+  return {matches: false, differences: {$: [expected, actual]}}
+}
+
+/**
+ * @param {any} actual
+ * @param {Record<string, any> | any[]} expected
+ * @returns {import("./equality.js").MatchResult}
+ */
+export function matchObject(actual, expected) {
+  return matchResult(actual, expected, {partial: true})
+}
+
+/** @param {any} value @returns {value is ContainingMatcher} */
 function isContaining(value) {
-  return isAsymmetricMatcher(value) &&
-    (value.__velociousMatcher === "arrayContaining" || value.__velociousMatcher === "objectContaining")
+  return isArrayContaining(value) || isObjectContaining(value)
 }
 
 /** @param {any} value @returns {string} */
