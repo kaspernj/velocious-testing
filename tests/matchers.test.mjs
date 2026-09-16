@@ -26,6 +26,18 @@ test("equality and representative failure messages are Velocious-compatible", ()
   assert.throws(() => expect("hello").toContain("x"), {message: "\"hello\" doesn't contain \"x\""})
 })
 
+test("toEqual preserves loose legacy comparison only for top-level primitive values", () => {
+  expect("1").toEqual(1)
+  expect(null).toEqual(undefined)
+  expect("1").not.toEqual(2)
+  assert.throws(() => expect("1").not.toEqual(1), /unexpected equal/u)
+
+  expect({value: "1"}).not.toEqual({value: 1})
+  expect(["1"]).not.toEqual([1])
+  assert.throws(() => expect({value: "1"}).toEqual({value: 1}), /Diff:/u)
+  assert.throws(() => expect(["1"]).toEqual([1]), /Diff:/u)
+})
+
 test("containing matchers compose and preserve duplicate requirements", () => {
   expect({name: "Ada", flags: ["a", "b"]}).toEqual(objectContaining({flags: arrayContaining(["b"])}))
   expect([{id: 1}, {id: 2}]).toEqual(arrayContaining([objectContaining({id: 2})]))
@@ -250,6 +262,74 @@ test("documented matcher surface handles values, promises, and change expectatio
     .toChange(() => first).by(1)
     .andChange(() => second).by(2)
     .execute()
+})
+
+test("change expectations await every before and after probe sequentially", async () => {
+  const events = []
+  let actionFinished = false
+  const probe = (name, before, after) => async () => {
+    const phase = actionFinished ? "after" : "before"
+    events.push(`${phase}:${name}:start`)
+    await Promise.resolve()
+    events.push(`${phase}:${name}:end`)
+    return actionFinished ? after : before
+  }
+
+  await expect(async () => {
+    events.push("action:start")
+    await Promise.resolve()
+    actionFinished = true
+    events.push("action:end")
+  }).toChange(probe("first", 1, 2)).by(1)
+    .andChange(probe("second", 2, 4)).by(2)
+    .execute()
+
+  assert.deepEqual(events, [
+    "before:first:start",
+    "before:first:end",
+    "before:second:start",
+    "before:second:end",
+    "action:start",
+    "action:end",
+    "after:first:start",
+    "after:first:end",
+    "after:second:start",
+    "after:second:end"
+  ])
+})
+
+test("a rejecting earlier change probe never starts a later sibling probe", async () => {
+  const failure = new Error("first before probe failed")
+  let actionRan = false
+  let siblingState = "not started"
+  let releaseSibling
+  let siblingCompletion = Promise.resolve()
+
+  const execution = expect(() => { actionRan = true })
+    .toChange(async () => {
+      await Promise.resolve()
+      throw failure
+    }).by(0)
+    .andChange(() => {
+      siblingState = "running"
+      siblingCompletion = new Promise((resolve) => {
+        releaseSibling = () => {
+          siblingState = "finished"
+          resolve(0)
+        }
+      })
+      return siblingCompletion
+    }).by(0)
+    .execute()
+
+  try {
+    await assert.rejects(execution, (error) => error === failure)
+    assert.equal(siblingState, "not started")
+    assert.equal(actionRan, false)
+  } finally {
+    if (releaseSibling) releaseSibling()
+    await siblingCompletion
+  }
 })
 
 test("promise chains apply matchers to the required settlement with negation", async () => {
@@ -512,6 +592,24 @@ test("toHaveAttributes uses ordinary positive and negated assertion behavior", (
   expect(record).not.toHaveAttributes({id: 8})
   assert.throws(() => expect(record).toHaveAttributes({id: 8}), /Object had different values/)
   assert.throws(() => expect(record).not.toHaveAttributes({id: 7}), /Object had unexpected values/)
+})
+
+test("toHaveAttributes preserves loose primitive returns while nested values stay strict", () => {
+  const record = {
+    count: () => "1",
+    missing: () => null,
+    profile: () => ({id: "1"}),
+    values: () => ["1"]
+  }
+
+  expect(record).toHaveAttributes({count: 1, missing: undefined})
+  expect(record).not.toHaveAttributes({count: 2})
+  assert.throws(() => expect(record).not.toHaveAttributes({count: 1}), /unexpected values/u)
+
+  expect(record).not.toHaveAttributes({profile: {id: 1}})
+  expect(record).not.toHaveAttributes({values: [1]})
+  assert.throws(() => expect(record).toHaveAttributes({profile: {id: 1}}), /different values/u)
+  assert.throws(() => expect(record).toHaveAttributes({values: [1]}), /different values/u)
 })
 
 test("toMatch is deterministic for global and sticky expressions without changing lastIndex", () => {

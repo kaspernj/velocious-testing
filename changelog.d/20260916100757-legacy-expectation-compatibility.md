@@ -1,0 +1,1 @@
+Restore legacy top-level primitive coercion for `toEqual` and returned `toHaveAttributes` values without weakening nested structural equality, and await chained change probes sequentially before and after the action.
