@@ -70,7 +70,9 @@ test("TensorBuzz fans out lockfile setup into supported Node tests and one quali
     'NPM_CONFIG_UPDATE_NOTIFIER: "false"'
   ]) assert.match(configuration, new RegExp(`^  ${environmentLine}$`, "m"))
   assert.match(configuration, /^builds:\n  setup:\n/m)
-  assert.equal((configuration.match(/npm ci --no-audit --fund=false/g) || []).length, 1)
+  assert.match(configuration, /^dependency_roots:\n  - path: \.\n/m)
+  assert.doesNotMatch(configuration, /npm (?:ci|install)\b/)
+  assert.doesNotMatch(configuration, /unmanaged_dependency_installs/)
   assert.match(configuration, /^    builds:\n      node_20_tests:\n/m)
   assert.deepEqual(
     [...configuration.matchAll(/^      ([a-z0-9_]+):$/gm)].map((match) => match[1]),
