@@ -87,6 +87,10 @@ declare module "@velocious/testing" {
 
 The root declarations export `AsymmetricMatcher`, `CustomMatcher`, `CustomMatcherContext`, `CustomMatcherDefinitions`, and `CustomMatcherResult` for reusable helper typing.
 
+## Typed arrays and ArrayBuffers
+
+`toEqual`, `toContainEqual`, `toMatchObject`, and the shared equality engine compare `Buffer`, typed-array, `DataView`, and `ArrayBuffer` values by their byte contents instead of object identity. Two binary values are equal when they expose the same bytes and the same constructor: a `Buffer` never equals a `Uint8Array`, and a `Uint8Array` never equals an `Int8Array`, matching Node's `deepStrictEqual` boundary. Comparisons respect `byteOffset` and `byteLength`, so a `subarray` equals an equal-bytes standalone value. Failure diagnostics render bounded hexadecimal previews such as `<Buffer 01 02 (2 bytes)>`.
+
 ## Legacy expectation compatibility
 
 `toEqual` preserves the legacy facade's coercive comparison when both top-level values are primitives. For example, `expect("1").toEqual(1)` and `expect(null).toEqual(undefined)` pass. A top-level dense singleton array containing a primitive also compares its element coercively with a primitive in either direction, so `expect(["sql"]).toEqual("sql")` and `expect(1).toEqual([1])` pass. This exception never applies recursively: `{value: ["sql"]}` does not equal `{value: "sql"}`, and `[[1]]` does not equal `[1]`. Functions, arbitrary objects, and singleton arrays containing reference values continue through the strict canonical equality engine without executing coercion hooks.
