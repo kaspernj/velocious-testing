@@ -114,6 +114,48 @@ function matchesAsymmetric(actual, expected, pairs) {
   }
 }
 
+/** @param {any} value @returns {boolean} */
+function isBinaryValue(value) {
+  if (value instanceof ArrayBuffer) return true
+  if (typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer) return true
+  return ArrayBuffer.isView(value)
+}
+
+/** @param {any} value @returns {Uint8Array | undefined} */
+function binaryBytes(value) {
+  if (value instanceof ArrayBuffer || (typeof SharedArrayBuffer === "function" && value instanceof SharedArrayBuffer)) {
+    return new Uint8Array(value)
+  }
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+  return undefined
+}
+
+/** @param {any} actual @param {any} expected @returns {boolean} */
+function matchesBinary(actual, expected) {
+  const actualBytes = binaryBytes(actual)
+  const expectedBytes = binaryBytes(expected)
+  if (!actualBytes || !expectedBytes || actualBytes.byteLength !== expectedBytes.byteLength) return false
+  if (actual.constructor !== expected.constructor) return false
+  for (let index = 0; index < actualBytes.byteLength; index += 1) {
+    if (actualBytes[index] !== expectedBytes[index]) return false
+  }
+  return true
+}
+
+/** @param {any} value @returns {string} */
+function binaryDescription(value) {
+  if (ArrayBuffer.isView(value)) {
+    const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength)
+    const limit = Math.min(bytes.byteLength, 24)
+    const preview = []
+    for (let index = 0; index < limit; index += 1) preview.push(bytes[index].toString(16).padStart(2, "0"))
+    const body = preview.join(" ")
+    const truncated = bytes.byteLength > limit ? " …" : ""
+    return `<${value.constructor?.name || "View"}${body ? ` ${body}` : ""}${truncated} (${bytes.byteLength} bytes)>`
+  }
+  return `<${value?.constructor?.name || "ArrayBuffer"} (${value.byteLength} bytes)>`
+}
+
 /** @param {any} actual @param {any} expected @param {[any, any][]} pairs @returns {boolean} */
 function matchesInternal(actual, expected, pairs) {
   if (isAsymmetricMatcher(expected)) return matchesAsymmetric(actual, expected, pairs)
@@ -126,6 +168,7 @@ function matchesInternal(actual, expected, pairs) {
     if (actual.size !== expected.size) return false
     return matchesUnordered([...actual], [...expected], pairs)
   }
+  if (isBinaryValue(actual) || isBinaryValue(expected)) return matchesBinary(actual, expected)
   if (actual && expected && typeof actual === "object" && typeof expected === "object") {
     if (pairs.some(([seenActual, seenExpected]) => seenActual === actual && seenExpected === expected)) return true
     pairs.push([actual, expected])
@@ -304,6 +347,7 @@ function stableFormatInternal(value, seen, state, depth) {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? "Date(Invalid)" : `Date(${JSON.stringify(value.toISOString())})`
   if (value instanceof RegExp) return String(value)
   if (value instanceof Error) return `${value.name}(${JSON.stringify(value.message)})`
+  if (isBinaryValue(value)) return binaryDescription(value)
   const reference = seen.get(value)
   if (reference !== undefined) return `<Circular #${reference}>`
   const referenceNumber = state.next

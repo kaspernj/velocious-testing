@@ -12,7 +12,7 @@ export const DEFAULT_CONTEXT_SYMBOL = Symbol.for("@velocious/testing.default-con
 /** @typedef {{excludeTags: string[], defaultTimeoutMs: number, retries: number, consoleOutput: "failure" | "live", failedConsoleOutputMaxLines: number}} TestConfig */
 /** @typedef {{excludeTags?: string[] | string, defaultTimeoutMs?: number, defaultTimeoutSeconds?: number, retries?: number, consoleOutput?: "failure" | "live", failedConsoleOutputMaxLines?: number}} TestConfigInput */
 /** @typedef {(...args: any[]) => void | Promise<void>} LifecycleCallback */
-/** @typedef {Record<string, any> & {focus?: boolean, tags?: string[] | string, retries?: number, retry?: number, timeoutMs?: number, timeoutSeconds?: number}} TestDeclarationOptions */
+/** @typedef {Record<string, any> & {focus?: boolean, tags?: string[] | string, retries?: number, retry?: number, timeoutMs?: number, timeoutSeconds?: number, skip?: boolean, todo?: boolean}} TestDeclarationOptions */
 /** @typedef {{callback: LifecycleCallback, location: DeclarationLocation}} HookDeclaration */
 /** @typedef {{type: "test", name: string, callback: LifecycleCallback, options: TestDeclarationOptions, tags: string[], focus: boolean, state: DeclarationState, rowArguments: any[], location: DeclarationLocation}} TestDeclaration */
 /** @typedef {{beforeAll: HookDeclaration[], afterAll: HookDeclaration[], beforeEach: HookDeclaration[], afterEach: HookDeclaration[]}} SuiteHooks */
@@ -180,8 +180,9 @@ function declareTest(context, name, arg1, arg2, state = "run", focused = false, 
   if (!parent) throw new Error("Tests must be declared inside a describe block")
   const options = typeof arg1 === "function" ? {} : arg1 || {}
   const suppliedCallback = typeof arg1 === "function" || arg2 !== undefined
-  if (state === "todo" && suppliedCallback) throw new Error(`it.todo does not accept a callback: ${name}`)
-  const callback = state === "todo" || (state === "skip" && !suppliedCallback) ? () => {} : requiredCallback("it", name, arg1, arg2)
+  const declaredState = state !== "run" ? state : options.todo === true ? "todo" : options.skip === true ? "skip" : "run"
+  if (declaredState === "todo" && suppliedCallback) throw new Error(`it.todo does not accept a callback: ${name}`)
+  const callback = declaredState === "todo" || (declaredState === "skip" && !suppliedCallback) ? () => {} : requiredCallback("it", name, arg1, arg2)
   if (parent.tests.some((/** @type {any} */ entry) => entry.name === name)) throw new Error(`Duplicate test description: ${name}`)
   const tags = normalizeTags([...parent.tags, ...normalizeTags(options.tags)])
   const mergedOptions = {...parent.options, ...options, tags}
@@ -193,7 +194,7 @@ function declareTest(context, name, arg1, arg2, state = "run", focused = false, 
     options: mergedOptions,
     tags,
     focus: focused || Boolean(options.focus),
-    state: parent.state === "run" ? state : parent.state,
+    state: parent.state === "run" ? declaredState : parent.state,
     rowArguments: tableArguments,
     location: location || context._declarationLocator()
   }
@@ -214,6 +215,7 @@ function declareTest(context, name, arg1, arg2, state = "run", focused = false, 
  */
 function declareSuite(context, name, arg1, arg2, state = "run", focused = false, location, tableArguments = []) {
   const options = typeof arg1 === "function" ? {} : arg1 || {}
+  const declaredState = state !== "run" ? state : options.todo === true ? "todo" : options.skip === true ? "skip" : "run"
   const callback = requiredCallback("describe", name, arg1, arg2)
   const parent = context._stack.at(-1)
   const collection = parent ? parent.suites : context.registry.suites
@@ -228,7 +230,7 @@ function declareSuite(context, name, arg1, arg2, state = "run", focused = false,
     options: mergedOptions,
     tags,
     focus: focused || Boolean(options.focus),
-    state: parent?.state && parent.state !== "run" ? parent.state : state,
+    state: parent?.state && parent.state !== "run" ? parent.state : declaredState,
     location: location || context._declarationLocator(),
     hooks: {beforeAll: [], afterAll: [], beforeEach: [], afterEach: []},
     suites: [],

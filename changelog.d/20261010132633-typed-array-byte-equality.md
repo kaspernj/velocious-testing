@@ -1,0 +1,1 @@
+Compare Buffer, typed-array, DataView, and ArrayBuffer values by byte contents in toEqual, toContainEqual, toMatchObject, and the shared equality engine, with class boundaries matching Node's deepStrictEqual and bounded hexadecimal previews in binary differences.

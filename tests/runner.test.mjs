@@ -877,6 +877,26 @@ test("skip and todo declarations never run bodies or inherited lifecycle hooks",
   assert.equal(events.filter((event) => event.type === "test:finish").length, 1)
 })
 
+test("skip and todo options are reported as declared non-runs", async () => {
+  const context = createTestContext()
+  const calls = []
+
+  context.describe("option states", () => {
+    context.it("runs", () => calls.push("runs"))
+    context.it("option skipped", {skip: true}, () => calls.push("option skipped"))
+    context.it("option todo", {todo: true})
+  })
+
+  const result = await runTests({context})
+
+  assert.deepEqual(calls, ["runs"])
+  assert.deepEqual(result.nonRunTests.map((entry) => [entry.fullName, entry.status]), [
+    ["option states option skipped", "skipped"],
+    ["option states option todo", "todo"]
+  ])
+  assert.deepEqual(result.counts, {total: 1, passed: 1, failed: 0, skipped: 2})
+})
+
 test("runnable focus selects nested only declarations but cannot revive explicit non-runs", async () => {
   const context = createTestContext()
   const calls = []

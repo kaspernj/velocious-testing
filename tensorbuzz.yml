@@ -1,3 +1,5 @@
+dependency_roots:
+  - path: .
 environment:
   CI: "true"
   NODE_ENV: test
@@ -10,7 +12,6 @@ builds:
     script:
       - node --version
       - npm --version
-      - npm ci --no-audit --fund=false
     builds:
       node_20_tests:
         name: Node 20 tests

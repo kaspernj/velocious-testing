@@ -1,0 +1,1 @@
+Allow it and describe declarations to select skip and todo states through `{skip: true}` and `{todo: true}` options with the same inheritance, focus, and callback rules as the existing skip and todo aliases.
