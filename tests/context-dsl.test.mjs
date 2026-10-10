@@ -133,6 +133,29 @@ test("skip callbacks are optional while todo rejects test callbacks clearly", ()
   assert.throws(() => context.describe.todo("invalid suite"), /Invalid arguments for describe: invalid suite/)
 })
 
+test("skip and todo declaration options map onto the same explicit states", () => {
+  const context = createTestContext()
+
+  context.describe("options", () => {
+    context.it("skipped by option", {skip: true}, () => {})
+    context.it("kept by explicit false", {skip: false}, () => {})
+    context.it("todo by option", {todo: true})
+    context.it.skip("dsl skip beats option", {skip: false}, () => {})
+    assert.throws(() => context.it("invalid todo", {todo: true}, () => {}), /it\.todo.*does not accept a callback/i)
+  })
+  context.describe("skipped suite by option", {skip: true}, () => {
+    context.it("inherited option skip", () => {})
+  })
+
+  const [options, skippedSuite] = context.registry.suites
+  assert.equal(options.tests[0].state, "skip")
+  assert.equal(options.tests[1].state, "run")
+  assert.equal(options.tests[2].state, "todo")
+  assert.equal(options.tests[3].state, "skip")
+  assert.equal(skippedSuite.state, "skip")
+  assert.equal(skippedSuite.tests[0].state, "skip")
+})
+
 test("table declarations spread arrays, pass scalar and object rows, and interpolate every token", () => {
   const context = createTestContext()
   const suiteArguments = []
