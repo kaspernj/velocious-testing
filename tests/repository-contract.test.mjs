@@ -100,4 +100,65 @@ test("TensorBuzz fans out lockfile setup into supported Node tests and one quali
   assert.match(useNode, /curl .*--retry 5 .*https:\/\/nodejs\.org\/dist\/v\$\{version\}/s)
   assert.match(useNode, /test "\$\(node --version\)" = "v\$\{version\}"/)
 })
+
+test("every TensorBuzz lane declares quoted path patterns and the chained parent stays broad", async () => {
+  const configuration = await readFile("tensorbuzz.yml", "utf8")
+  const lines = configuration.split("\n")
+  /** @type {Record<string, string[]>} */
+  const declaredPaths = {}
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const build = lines[index].match(/^( {2}| {6})([a-z0-9_]+):$/)
+    if (!build) continue
+    const buildIndent = build[1].length
+    for (let scan = index + 1; scan < lines.length; scan += 1) {
+      const line = lines[scan]
+      if (!line.trim()) continue
+      const indent = line.length - line.trimStart().length
+      if (indent <= buildIndent) break
+      if (indent !== buildIndent + 2 || line.trim() !== "paths:") continue
+      /** @type {string[]} */
+      const patterns = []
+      for (let item = scan + 1; item < lines.length; item += 1) {
+        const entry = lines[item]
+        if (!entry.trim()) break
+        if (entry.length - entry.trimStart().length !== buildIndent + 4) break
+        const glob = entry.trim().match(/^- "(.+)"$/)
+        assert.ok(glob, `paths entries must be quoted globs: ${entry}`)
+        patterns.push(glob[1])
+      }
+      assert.ok(patterns.length > 0, `${build[2]} declares an empty paths list`)
+      declaredPaths[build[2]] = patterns
+      break
+    }
+  }
+
+  assert.deepEqual(Object.keys(declaredPaths).sort(), ["node_20_tests", "node_22_tests", "node_24_tests", "quality_and_package", "setup"])
+  assert.deepEqual(declaredPaths.setup, ["**"], "setup is the chained parent: a skipped parent skips every lane, so it may not narrow")
+
+  const sourceScope = ["src/**", "tests/**", "scripts/**", "package.json", "package-lock.json", "tsconfig.json", "tsconfig.build.json"]
+  for (const lane of ["node_20_tests", "node_22_tests", "node_24_tests"]) {
+    assert.deepEqual(declaredPaths[lane], sourceScope, `${lane} runs npm test, so it owns exactly the built-and-tested source scope`)
+  }
+
+  for (const pattern of sourceScope) {
+    assert.ok(declaredPaths.quality_and_package.includes(pattern), `quality_and_package must keep ${pattern}`)
+  }
+  const packageData = JSON.parse(await readFile("package.json", "utf8"))
+  for (const packedPath of packageData.files) {
+    if (packedPath === "build") continue
+    assert.ok(
+      declaredPaths.quality_and_package.some((pattern) => pattern === packedPath || pattern === `${packedPath}/**`),
+      `quality_and_package runs npm pack, so it must keep the published path ${packedPath}`
+    )
+  }
+  for (const readPath of ["Dockerfile", "compose.yml", "eslint.config.js"]) {
+    assert.ok(declaredPaths.quality_and_package.includes(readPath), `quality_and_package reads ${readPath}`)
+  }
+
+  assert.deepEqual(sourceScope.filter((pattern) => pattern.startsWith("!")), [], "test lanes scope by positive globs, so no negation is needed")
+  for (const patterns of Object.values(declaredPaths)) {
+    assert.equal(patterns.some((pattern) => pattern.includes("tensorbuzz.yml")), false)
+  }
+})
 })

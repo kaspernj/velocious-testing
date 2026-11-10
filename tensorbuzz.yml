@@ -9,27 +9,70 @@ environment:
 builds:
   setup:
     name: Setup
+    # Every lane chains off setup, and a skipped parent skips its children, so this
+    # list has to stay broad: narrowing it would skip lanes that their own paths allow.
+    paths:
+      - "**"
     script:
       - node --version
       - npm --version
     builds:
       node_20_tests:
         name: Node 20 tests
+        paths:
+          - "src/**"
+          - "tests/**"
+          - "scripts/**"
+          - "package.json"
+          - "package-lock.json"
+          - "tsconfig.json"
+          - "tsconfig.build.json"
         script:
           - scripts/tensorbuzz-use-node 20.20.2
           - npm test
       node_22_tests:
         name: Node 22 tests
+        paths:
+          - "src/**"
+          - "tests/**"
+          - "scripts/**"
+          - "package.json"
+          - "package-lock.json"
+          - "tsconfig.json"
+          - "tsconfig.build.json"
         script:
           - scripts/tensorbuzz-use-node 22.23.2
           - npm test
       node_24_tests:
         name: Node 24 tests
+        paths:
+          - "src/**"
+          - "tests/**"
+          - "scripts/**"
+          - "package.json"
+          - "package-lock.json"
+          - "tsconfig.json"
+          - "tsconfig.build.json"
         script:
           - scripts/tensorbuzz-use-node 24.19.0
           - npm test
       quality_and_package:
         name: Quality and package validation
+        paths:
+          - "src/**"
+          - "tests/**"
+          - "scripts/**"
+          - "docs/**"
+          - "changelog.d/**"
+          - "README.md"
+          - "LICENSE"
+          - "Dockerfile"
+          - "compose.yml"
+          - "eslint.config.js"
+          - "package.json"
+          - "package-lock.json"
+          - "tsconfig.json"
+          - "tsconfig.build.json"
         script:
           - node --version
           - npm run lint
